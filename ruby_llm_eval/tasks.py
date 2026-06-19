@@ -39,7 +39,7 @@ def _read(path: Path) -> str:
 
 
 def load_task(task_dir: Path) -> Task:
-    """Load a single task directory, validating that required files exist."""
+    """Load a single task directory, validating that required files exist and are non-empty."""
     missing = [
         name for name in (PROMPT_FILE, TEST_FILE, REFERENCE_FILE) if not (task_dir / name).is_file()
     ]
@@ -47,11 +47,17 @@ def load_task(task_dir: Path) -> Task:
         raise ValueError(
             f"Task '{task_dir.name}' is missing required file(s): {', '.join(missing)}"
         )
+
+    contents = {name: _read(task_dir / name) for name in (PROMPT_FILE, TEST_FILE, REFERENCE_FILE)}
+    empty = [name for name, content in contents.items() if not content.strip()]
+    if empty:
+        raise ValueError(f"Task '{task_dir.name}' has empty required file(s): {', '.join(empty)}")
+
     return Task(
         id=task_dir.name,
         path=task_dir,
-        prompt=_read(task_dir / PROMPT_FILE),
-        test=_read(task_dir / TEST_FILE),
+        prompt=contents[PROMPT_FILE],
+        test=contents[TEST_FILE],
     )
 
 
