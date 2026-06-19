@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
-from .config import find_config_dir, find_sandbox_dir, load_pricing, load_providers
+from .config import find_config_dir, find_sandbox_dir, find_tasks_dir, load_pricing, load_providers
 from .evaluate import IMAGE_TAG, docker_available, ensure_image, run_sample
 from .generate import generate_for_task, safe_model_dir
 from .model_client import build_client
@@ -57,7 +57,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
     jobs = max(1, args.jobs)
 
-    tasks_dir = Path(args.tasks)
+    tasks_dir = find_tasks_dir(args.tasks)
     tasks = discover_tasks(tasks_dir, only=args.task or None)
     task_set_version = read_version(tasks_dir)
 
@@ -158,7 +158,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_list_tasks(args: argparse.Namespace) -> int:
-    tasks_dir = Path(args.tasks)
+    tasks_dir = find_tasks_dir(args.tasks)
     tasks = discover_tasks(tasks_dir, only=args.task or None)
     version = read_version(tasks_dir)
     print(f"{len(tasks)} task(s) in {tasks_dir} (v{version}):")
@@ -182,7 +182,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="stub",
         help="Provider from configs/providers.yaml (default: stub, runs offline).",
     )
-    run.add_argument("--tasks", default="tasks", help="Tasks directory (default: ./tasks).")
+    run.add_argument(
+        "--tasks",
+        help=(
+            "Tasks directory (default: nearest usable ./tasks up the tree, "
+            "otherwise bundled tasks)."
+        ),
+    )
     run.add_argument(
         "--task",
         action="append",
@@ -225,7 +231,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.set_defaults(func=cmd_run)
 
     ls = sub.add_parser("list-tasks", help="List available tasks and their test framework.")
-    ls.add_argument("--tasks", default="tasks", help="Tasks directory (default: ./tasks).")
+    ls.add_argument(
+        "--tasks",
+        help=(
+            "Tasks directory (default: nearest usable ./tasks up the tree, "
+            "otherwise bundled tasks)."
+        ),
+    )
     ls.add_argument(
         "--task", action="append", help="Show only this task id (repeatable). Default: all."
     )

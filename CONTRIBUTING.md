@@ -24,6 +24,21 @@ ruff format .           # auto-format
 pytest -q               # harness unit tests
 ```
 
+When changing built-in `tasks/`, `configs/`, or `sandbox/` assets, sync the packaged copies before running tests:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+import shutil
+root = Path.cwd()
+for name in ("configs", "sandbox", "tasks"):
+    dest = root / "ruby_llm_eval" / "assets" / name
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(root / name, dest)
+PY
+```
+
 CI runs the same checks plus a full pipeline against the stub model.
 
 ## Adding a task
