@@ -29,10 +29,21 @@ from .tasks import Task
 
 IMAGE_TAG = "ruby-llm-eval-sandbox:latest"
 
-# Minitest prints a summary like "3 runs, 9 assertions, 1 failures, 0 errors".
-# Its presence means the suite actually ran (so a non-zero exit is a real test
-# failure); its absence means the file blew up before testing (a load error).
-_MINITEST_SUMMARY_RE = re.compile(r"\d+ runs?, \d+ assertions?")
+# Each framework prints a one-line summary when it actually runs — Minitest
+# "3 runs, 9 assertions, ..." or RSpec "5 examples, 1 failure". Its presence
+# means a non-zero exit is a real test failure; its absence means the file blew
+# up before testing (a load/syntax error). `command` is how the test file is
+# executed inside the container.
+FRAMEWORKS = {
+    "minitest": {
+        "command": ["ruby"],
+        "summary": re.compile(r"\d+ runs?, \d+ assertions?"),
+    },
+    "rspec": {
+        "command": ["rspec"],
+        "summary": re.compile(r"\d+ examples?, \d+ failures?"),
+    },
+}
 
 # coreutils `timeout` exits 124 when it has to kill the command.
 _TIMEOUT_EXIT_CODE = 124
@@ -77,12 +88,12 @@ def ensure_image(dockerfile_dir: Path, image: str = IMAGE_TAG) -> None:
         build_image(dockerfile_dir, image)
 
 
-def _classify(returncode: int, stdout: str, stderr: str) -> str:
+def _classify(returncode: int, stdout: str, stderr: str, summary_re: re.Pattern) -> str:
     if returncode == 0:
         return STATUS_PASSED
     if returncode == _TIMEOUT_EXIT_CODE:
         return STATUS_TIMEOUT
-    if _MINITEST_SUMMARY_RE.search(stdout + "\n" + stderr):
+    if summary_re.search(stdout + "\n" + stderr):
         return STATUS_FAILED
     return STATUS_ERROR
 
@@ -110,6 +121,8 @@ def run_sample(
     if not sample.code.strip():
         return SampleResult(task.id, sample.index, STATUS_ERROR, "empty completion")
 
+    framework = FRAMEWORKS[task.framework]
+
     scratch_root = Path(scratch_dir) if scratch_dir else Path.cwd() / ".rle_sandbox"
     scratch_root.mkdir(parents=True, exist_ok=True)
     # Absolute path: `docker -v` requires an absolute bind-mount source, and the
@@ -117,7 +130,7 @@ def run_sample(
     work = Path(tempfile.mkdtemp(prefix="rle_", dir=str(scratch_root))).resolve()
     try:
         solution = work / "solution.rb"
-        test = work / "test.rb"
+        test = work / task.test_filename
         solution.write_text(sample.code, encoding="utf-8")
         test.write_text(task.test, encoding="utf-8")
 
@@ -156,8 +169,8 @@ def run_sample(
             image,
             "timeout",
             f"{timeout}s",
-            "ruby",
-            "test.rb",
+            *framework["command"],
+            task.test_filename,
         ]
 
         try:
@@ -172,7 +185,7 @@ def run_sample(
             subprocess.run(["docker", "kill", container], capture_output=True)
             return SampleResult(task.id, sample.index, STATUS_TIMEOUT, "host-side timeout")
 
-        status = _classify(proc.returncode, proc.stdout, proc.stderr)
+        status = _classify(proc.returncode, proc.stdout, proc.stderr, framework["summary"])
         stderr = "" if status == STATUS_PASSED else (proc.stdout + proc.stderr).strip()
         return SampleResult(task.id, sample.index, status, stderr[:4000])
     finally:

@@ -131,6 +131,28 @@ That's the whole contribution surface — no registry to edit, no code to touch.
 - **Mind the difficulty mix.** A range from warm-ups to genuinely tricky tasks
   makes the score more informative.
 
+### Using RSpec instead of Minitest
+
+A task may ship an RSpec suite instead of a Minitest one: name the file
+`spec.rb` (rather than `test.rb`) and the framework is auto-detected. Include
+exactly one of the two. The convention is otherwise identical — the spec must
+`require_relative "solution"`. See `tasks/016_stack` for a complete example:
+
+```ruby
+require_relative "solution"
+
+RSpec.describe Stack do
+  it "pushes and pops in LIFO order" do
+    stack = Stack.new
+    stack.push(1)
+    stack.push(2)
+    expect(stack.pop).to eq 2
+  end
+end
+```
+
+RSpec is preinstalled in the sandbox image, so no Bundler or Gemfile is needed.
+
 ### Using private / external tasks
 
 You don't have to add tasks to this repo at all. Keep them anywhere (ideally a

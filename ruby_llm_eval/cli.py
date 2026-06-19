@@ -29,6 +29,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     providers = load_providers(config_dir)
     pricing = load_pricing(config_dir)
 
+    if args.k > args.n:
+        _eprint(f"Error: --k ({args.k}) cannot exceed -n/--samples ({args.n}).")
+        return 2
+
     tasks_dir = Path(args.tasks)
     tasks = discover_tasks(tasks_dir, only=args.task or None)
     task_set_version = read_version(tasks_dir)
@@ -61,8 +65,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     _eprint(
         f"\nModel: {args.model}  (provider: {args.provider})\n"
         f"Tasks: {len(tasks)} from {tasks_dir} (v{task_set_version})  "
-        f"N={args.n}  temperature={args.temperature}  timeout={args.timeout}s\n"
+        f"N={args.n}  k={args.k}  temperature={args.temperature}  timeout={args.timeout}s\n"
     )
+
+    metric = f"pass@{args.k}"
 
     task_summaries: list[dict] = []
     total_input = 0
@@ -90,17 +96,18 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             for sample in samples
         ]
-        summary = summarize_task(task.id, results, args.n)
+        summary = summarize_task(task.id, results, args.n, args.k)
         task_summaries.append(summary)
 
         glyphs = " ".join(_GLYPH.get(r.status, "?") for r in results)
-        _eprint(f"  {task.id:<28} pass@1 {summary['pass@1'] * 100:5.1f}%  [{glyphs}]")
+        _eprint(f"  {task.id:<28} {metric} {summary['pass_at_k'] * 100:5.1f}%  [{glyphs}]")
 
     timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
     report = build_report(
         model=args.model,
         provider=args.provider,
         n=args.n,
+        k=args.k,
         temperature=args.temperature,
         timeout=args.timeout,
         task_set_version=task_set_version,
@@ -113,11 +120,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     json_path, md_path = write_reports(report, out_root, timestamp)
     shutil.rmtree(scratch_dir, ignore_errors=True)
 
-    overall = report["overall_pass@1"]
+    overall = report["overall_pass_at_k"]
     cost = report["cost"]
     cost_str = f"${cost['usd']:.4f}" if cost["priced"] else "n/a (add model to pricing.yaml)"
     _eprint(
-        f"\nOverall pass@1: {overall * 100:.1f}%   "
+        f"\nOverall {metric}: {overall * 100:.1f}%   "
         f"tokens: {total_input} in / {total_output} out   cost: {cost_str}"
     )
     _eprint(f"Report: {json_path}")
@@ -128,7 +135,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ruby-llm-eval",
-        description="Measure how well an LLM writes Ruby code (pass@1).",
+        description="Measure how well an LLM writes Ruby code (pass@k).",
     )
     parser.add_argument("--version", action="version", version=f"ruby-llm-eval {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -153,6 +160,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
         help="Completions per task (default: 5).",
+    )
+    run.add_argument(
+        "-k",
+        dest="k",
+        type=int,
+        default=1,
+        help="The k in pass@k; must be <= n (default: 1).",
     )
     run.add_argument(
         "--temperature", type=float, default=0.2, help="Sampling temperature (default: 0.2)."

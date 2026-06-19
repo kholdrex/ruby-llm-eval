@@ -13,12 +13,37 @@ def _results(statuses):
     return [SampleResult("t", i, s) for i, s in enumerate(statuses)]
 
 
+def _report(summaries, *, k=1, input_tokens=0, output_tokens=0):
+    return build_report(
+        model="demo-model",
+        provider="stub",
+        n=summaries[0]["n"] if summaries else 1,
+        k=k,
+        temperature=0.2,
+        timeout=10,
+        task_set_version="0.2.0",
+        task_summaries=summaries,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        pricing=PRICING,
+        timestamp="20990101T000000",
+    )
+
+
 def test_summarize_task_counts_statuses():
     summary = summarize_task("001_x", _results(["passed", "failed", "passed"]), n=3)
     assert summary["passed"] == 2
-    assert abs(summary["pass@1"] - 2 / 3) < 1e-9
+    assert abs(summary["pass_at_k"] - 2 / 3) < 1e-9
     assert summary["status_counts"]["failed"] == 1
     assert summary["status_counts"]["timeout"] == 0
+
+
+def test_summarize_task_pass_at_k_for_k_gt_1():
+    # 1 of 5 passing, pass@2 = 1 - C(4,2)/C(5,2) = 0.4
+    summary = summarize_task(
+        "x", _results(["passed", "failed", "failed", "failed", "failed"]), n=5, k=2
+    )
+    assert abs(summary["pass_at_k"] - 0.4) < 1e-9
 
 
 def test_compute_cost_known_model():
@@ -38,40 +63,29 @@ def test_build_report_overall_is_mean_of_tasks():
         summarize_task("a", _results(["passed", "passed"]), n=2),
         summarize_task("b", _results(["passed", "failed"]), n=2),
     ]
-    report = build_report(
-        model="demo-model",
-        provider="stub",
-        n=2,
-        temperature=0.2,
-        timeout=10,
-        task_set_version="0.1.0",
-        task_summaries=summaries,
-        input_tokens=0,
-        output_tokens=0,
-        pricing=PRICING,
-        timestamp="20990101T000000",
-    )
-    assert report["overall_pass@1"] == 0.75
+    report = _report(summaries)
+    assert report["overall_pass_at_k"] == 0.75
     assert report["metric"] == "pass@1"
-    assert report["task_set_version"] == "0.1.0"
+    assert report["k"] == 1
+    assert report["task_set_version"] == "0.2.0"
+
+
+def test_metric_label_tracks_k():
+    summaries = [summarize_task("a", _results(["passed", "failed"]), n=2, k=2)]
+    report = _report(summaries, k=2)
+    assert report["metric"] == "pass@2"
 
 
 def test_render_markdown_includes_summary_row():
     summaries = [summarize_task("a", _results(["passed"]), n=1)]
-    report = build_report(
-        model="demo-model",
-        provider="stub",
-        n=1,
-        temperature=0.2,
-        timeout=10,
-        task_set_version="0.1.0",
-        task_summaries=summaries,
-        input_tokens=100,
-        output_tokens=50,
-        pricing=PRICING,
-        timestamp="20990101T000000",
-    )
+    report = _report(summaries, input_tokens=100, output_tokens=50)
     md = render_markdown(report)
     assert "| Model | pass@1 | Cost |" in md
     assert "`demo-model`" in md
     assert "100.0%" in md
+
+
+def test_render_markdown_header_reflects_k():
+    summaries = [summarize_task("a", _results(["passed", "failed"]), n=2, k=2)]
+    md = render_markdown(_report(summaries, k=2))
+    assert "| Model | pass@2 | Cost |" in md

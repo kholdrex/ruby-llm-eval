@@ -5,7 +5,7 @@ import pytest
 from ruby_llm_eval.tasks import (
     PROMPT_FILE,
     REFERENCE_FILE,
-    TEST_FILE,
+    TEST_FILES,
     discover_tasks,
     load_task,
     read_version,
@@ -13,6 +13,7 @@ from ruby_llm_eval.tasks import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = REPO_ROOT / "tasks"
+MINITEST_FILE = TEST_FILES["minitest"]
 
 
 def write_task(
@@ -26,7 +27,7 @@ def write_task(
     task_dir = tasks_dir / task_id
     task_dir.mkdir(parents=True)
     (task_dir / PROMPT_FILE).write_text(prompt, encoding="utf-8")
-    (task_dir / TEST_FILE).write_text(test, encoding="utf-8")
+    (task_dir / MINITEST_FILE).write_text(test, encoding="utf-8")
     (task_dir / REFERENCE_FILE).write_text(reference, encoding="utf-8")
     return task_dir
 
@@ -88,5 +89,18 @@ def test_load_task_rejects_blank_required_files(tmp_path, filename, overrides):
     assert "empty required file" in message
 
 
+def test_detects_minitest_framework():
+    task = load_task(TASKS_DIR / "001_fizzbuzz")
+    assert task.framework == "minitest"
+    assert task.test_filename == "test.rb"
+
+
+def test_detects_rspec_framework():
+    task = load_task(TASKS_DIR / "016_stack")
+    assert task.framework == "rspec"
+    assert task.test_filename == "spec.rb"
+    assert "RSpec.describe" in task.test
+
+
 def test_version_is_recorded():
-    assert read_version(TASKS_DIR) == "0.1.0"
+    assert read_version(TASKS_DIR) == "0.2.0"

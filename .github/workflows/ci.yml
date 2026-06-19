@@ -46,8 +46,8 @@ jobs:
           import glob, json, sys
           latest = sorted(glob.glob("results/run_*.json"))[-1]
           report = json.load(open(latest))
-          score = report["overall_pass@1"]
-          print(f"overall pass@1 = {score} (from {latest})")
+          score = report["overall_pass_at_k"]
+          print(f"overall {report['metric']} = {score} (from {latest})")
           if score != 1.0:
               # Surface per-task statuses so a sandbox/permissions regression is
               # easy to diagnose straight from the CI log.

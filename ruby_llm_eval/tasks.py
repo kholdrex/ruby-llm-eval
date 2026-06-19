@@ -1,13 +1,15 @@
 """Discover and load benchmark tasks from a tasks directory.
 
-A task is a directory named like ``001_fizzbuzz`` containing three files:
+A task is a directory named like ``001_fizzbuzz`` containing:
 
     prompt.md        the problem description + exact Ruby signature to implement
-    test.rb          a Minitest suite that ``require_relative "solution"``
+    test.rb          a Minitest suite, OR
+    spec.rb          an RSpec suite (use exactly one of test.rb / spec.rb)
     solution_ref.rb  a reference solution (never shown to the model)
 
-This is the entire contribution surface. Adding a task means adding a folder;
-there is no registry to edit.
+Both test frameworks ``require_relative "solution"``. This is the entire
+contribution surface — adding a task means adding a folder; there is no
+registry to edit.
 """
 
 from __future__ import annotations
@@ -16,8 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PROMPT_FILE = "prompt.md"
-TEST_FILE = "test.rb"
 REFERENCE_FILE = "solution_ref.rb"
+
+# Map each supported framework to the test filename that selects it.
+TEST_FILES = {"minitest": "test.rb", "rspec": "spec.rb"}
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,8 @@ class Task:
     id: str
     path: Path
     prompt: str
+    framework: str  # "minitest" or "rspec"
+    test_filename: str  # "test.rb" or "spec.rb"
     test: str
 
     def reference(self) -> str:
@@ -38,17 +44,30 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def load_task(task_dir: Path) -> Task:
-    """Load a single task directory, validating that required files exist and are non-empty."""
-    missing = [
-        name for name in (PROMPT_FILE, TEST_FILE, REFERENCE_FILE) if not (task_dir / name).is_file()
-    ]
-    if missing:
+def _detect_framework(task_dir: Path) -> tuple[str, str]:
+    """Return (framework, test_filename) for a task, requiring exactly one."""
+    present = [(fw, fn) for fw, fn in TEST_FILES.items() if (task_dir / fn).is_file()]
+    options = " / ".join(TEST_FILES.values())
+    if not present:
+        raise ValueError(f"Task '{task_dir.name}' has no test file (expected one of: {options}).")
+    if len(present) > 1:
         raise ValueError(
-            f"Task '{task_dir.name}' is missing required file(s): {', '.join(missing)}"
+            f"Task '{task_dir.name}' has multiple test files; include exactly one of {options}."
         )
+    return present[0]
 
-    contents = {name: _read(task_dir / name) for name in (PROMPT_FILE, TEST_FILE, REFERENCE_FILE)}
+
+def load_task(task_dir: Path) -> Task:
+    """Load a task directory, validating required files exist and are non-empty."""
+    if not (task_dir / PROMPT_FILE).is_file():
+        raise ValueError(f"Task '{task_dir.name}' is missing {PROMPT_FILE}.")
+    if not (task_dir / REFERENCE_FILE).is_file():
+        raise ValueError(f"Task '{task_dir.name}' is missing {REFERENCE_FILE}.")
+
+    framework, test_filename = _detect_framework(task_dir)
+
+    required = (PROMPT_FILE, REFERENCE_FILE, test_filename)
+    contents = {name: _read(task_dir / name) for name in required}
     empty = [name for name, content in contents.items() if not content.strip()]
     if empty:
         raise ValueError(f"Task '{task_dir.name}' has empty required file(s): {', '.join(empty)}")
@@ -57,7 +76,9 @@ def load_task(task_dir: Path) -> Task:
         id=task_dir.name,
         path=task_dir,
         prompt=contents[PROMPT_FILE],
-        test=contents[TEST_FILE],
+        framework=framework,
+        test_filename=test_filename,
+        test=contents[test_filename],
     )
 
 
