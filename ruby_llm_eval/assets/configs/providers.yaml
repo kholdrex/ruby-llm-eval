@@ -1,0 +1,49 @@
+# Registry of API providers. Each entry maps a provider name to an adapter
+# `type` (implemented in ruby_llm_eval/model_client.py) plus connection details.
+#
+#   type         which adapter to use: "openai" (OpenAI-compatible /chat/
+#                completions), "anthropic" (Messages API), or "stub" (offline).
+#   base_url     the API root the adapter posts to.
+#   api_key_env  the environment variable the key is read from (never the key
+#                itself — see .env.example).
+#
+# Use it with:  ruby-llm-eval run --provider <name> --model <model>
+# Adding a new provider is usually just a new entry here. See CONTRIBUTING.md.
+
+providers:
+  # Offline test double: feeds back each task's reference solution. Used by CI
+  # and great for trying the pipeline without any API key.
+  stub:
+    type: stub
+
+  anthropic:
+    type: anthropic
+    base_url: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+
+  openai:
+    type: openai
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+
+  # Any OpenAI-compatible gateway works by reusing the "openai" adapter type.
+  openrouter:
+    type: openai
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+
+  together:
+    type: openai
+    base_url: https://api.together.xyz/v1
+    api_key_env: TOGETHER_API_KEY
+
+  groq:
+    type: openai
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+
+  # Self-hosted runtimes (Ollama, vLLM, LM Studio, ...) speak the same protocol.
+  local:
+    type: openai
+    base_url: http://localhost:11434/v1
+    api_key_env: LOCAL_API_KEY
