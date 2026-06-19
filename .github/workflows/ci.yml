@@ -49,5 +49,9 @@ jobs:
           score = report["overall_pass@1"]
           print(f"overall pass@1 = {score} (from {latest})")
           if score != 1.0:
+              # Surface per-task statuses so a sandbox/permissions regression is
+              # easy to diagnose straight from the CI log.
+              for task in report["tasks"]:
+                  print(f"  {task['task_id']}: {task['status_counts']}")
               sys.exit(f"Expected 1.0, got {score}")
           PY

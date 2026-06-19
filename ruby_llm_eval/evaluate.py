@@ -112,10 +112,22 @@ def run_sample(
 
     scratch_root = Path(scratch_dir) if scratch_dir else Path.cwd() / ".rle_sandbox"
     scratch_root.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="rle_", dir=str(scratch_root)))
+    # Absolute path: `docker -v` requires an absolute bind-mount source, and the
+    # output dir (hence scratch_dir) is often a relative path like "results".
+    work = Path(tempfile.mkdtemp(prefix="rle_", dir=str(scratch_root))).resolve()
     try:
-        (work / "solution.rb").write_text(sample.code, encoding="utf-8")
-        (work / "test.rb").write_text(task.test, encoding="utf-8")
+        solution = work / "solution.rb"
+        test = work / "test.rb"
+        solution.write_text(sample.code, encoding="utf-8")
+        test.write_text(task.test, encoding="utf-8")
+
+        # The container runs as a non-root user whose uid differs from the host
+        # on native Linux. mkdtemp creates the dir as 0700, so without this the
+        # container could not read /work and every sample would error. Make the
+        # mounted dir and files world-readable.
+        work.chmod(0o755)
+        solution.chmod(0o644)
+        test.chmod(0o644)
 
         container = f"rle_{uuid.uuid4().hex[:12]}"
         cmd = [
