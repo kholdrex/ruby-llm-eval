@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ruby-llm-eval"
+version = "0.1.0"
+description = "Ruby-first, API-first benchmark measuring how well any LLM writes Ruby code (pass@1)."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "ruby-llm-eval contributors" }]
+keywords = ["llm", "ruby", "benchmark", "eval", "pass@1", "code-generation"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Ruby",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Software Development :: Testing",
+]
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.4", "pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/kholdrex/ruby-llm-eval"
+Repository = "https://github.com/kholdrex/ruby-llm-eval"
+
+[project.scripts]
+ruby-llm-eval = "ruby_llm_eval.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ruby_llm_eval*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

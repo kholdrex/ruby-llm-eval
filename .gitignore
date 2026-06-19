@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Run outputs
+/results/
+results/
+
+# Sandbox scratch (created when run_sample is used without an output dir)
+.rle_sandbox/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
