@@ -53,7 +53,11 @@ print(json.dumps({
     outside_source.mkdir()
     result = run([str(python), "-c", probe], cwd=outside_source)
     payload = json.loads(result.stdout)
+    list_tasks = run([str(python), "-m", "ruby_llm_eval.cli", "list-tasks"], cwd=outside_source)
 
+    assert "001_fizzbuzz" in list_tasks.stdout
+    assert "016_stack" in list_tasks.stdout
+    assert "ruby_llm_eval/assets/tasks" in list_tasks.stdout
     assert payload["config_dir"].endswith("ruby_llm_eval/assets/configs")
     assert payload["tasks_dir"].endswith("ruby_llm_eval/assets/tasks")
     assert payload["sandbox_dir"].endswith("ruby_llm_eval/assets/sandbox")

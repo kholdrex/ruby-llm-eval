@@ -158,7 +158,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_list_tasks(args: argparse.Namespace) -> int:
-    tasks_dir = Path(args.tasks)
+    tasks_dir = find_tasks_dir(args.tasks)
     tasks = discover_tasks(tasks_dir, only=args.task or None)
     version = read_version(tasks_dir)
     print(f"{len(tasks)} task(s) in {tasks_dir} (v{version}):")
@@ -231,7 +231,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.set_defaults(func=cmd_run)
 
     ls = sub.add_parser("list-tasks", help="List available tasks and their test framework.")
-    ls.add_argument("--tasks", default="tasks", help="Tasks directory (default: ./tasks).")
+    ls.add_argument(
+        "--tasks",
+        help=(
+            "Tasks directory (default: nearest usable ./tasks up the tree, "
+            "otherwise bundled tasks)."
+        ),
+    )
     ls.add_argument(
         "--task", action="append", help="Show only this task id (repeatable). Default: all."
     )
