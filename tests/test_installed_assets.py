@@ -59,4 +59,5 @@ print(json.dumps({
     assert payload["sandbox_dir"].endswith("ruby_llm_eval/assets/sandbox")
     assert payload["task_count"] >= 10
     assert payload["first_task"] == "001_fizzbuzz"
-    assert payload["version"] == "0.1.0"
+    expected_version = (REPO_ROOT / "tasks" / "VERSION").read_text(encoding="utf-8").strip()
+    assert payload["version"] == expected_version
