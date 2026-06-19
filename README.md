@@ -103,7 +103,14 @@ ruby-llm-eval run \
   -k 1 \                 # the k in pass@k; must be <= n (default: 1)
   --temperature 0.2 \    # sampling temperature (default: 0.2)
   --timeout 10 \         # per-test timeout in seconds (default: 10)
+  --jobs 4 \             # evaluate this many samples in parallel (default: 1)
   --task 003_two_sum     # run a single task (repeatable); default: all
+```
+
+List what's available (and each task's test framework) without running anything:
+
+```bash
+ruby-llm-eval list-tasks
 ```
 
 To estimate **pass@k for k > 1**, sample more completions and raise `-k`, e.g.

@@ -8,6 +8,8 @@
   framework is auto-detected and RSpec is preinstalled in the sandbox image.
 - Add 6 seed tasks (caesar cipher, binary search, merge intervals, matrix
   transpose, longest common prefix, and an RSpec stack); 16 tasks total.
+- Add `--jobs` to evaluate samples in parallel containers (default: 1).
+- Add a `list-tasks` command that lists tasks and their test framework.
 - Validate that required task files exist and are non-empty, with clear
   diagnostics naming the offending file(s).
 - Add issue/PR templates and document `pass@k` + RSpec in the README.

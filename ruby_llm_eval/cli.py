@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -24,14 +25,37 @@ def _eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
 
 
+def _evaluate_samples(task, samples, *, timeout, memory, cpus, scratch_dir, jobs):
+    """Run a task's samples in the sandbox, optionally in parallel.
+
+    Each sample is fully isolated (its own work dir + container name), so
+    concurrent runs are safe. ``pool.map`` preserves order, so results stay
+    aligned with ``samples``.
+    """
+
+    def run_one(sample):
+        return run_sample(
+            task, sample, timeout=timeout, memory=memory, cpus=cpus, scratch_dir=scratch_dir
+        )
+
+    if jobs <= 1 or len(samples) <= 1:
+        return [run_one(sample) for sample in samples]
+    with ThreadPoolExecutor(max_workers=min(jobs, len(samples))) as pool:
+        return list(pool.map(run_one, samples))
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     config_dir = find_config_dir(args.config_dir)
     providers = load_providers(config_dir)
     pricing = load_pricing(config_dir)
 
-    if args.k > args.n:
-        _eprint(f"Error: --k ({args.k}) cannot exceed -n/--samples ({args.n}).")
+    if args.n < 1:
+        _eprint(f"Error: -n/--samples must be >= 1 (got {args.n}).")
         return 2
+    if args.k < 1 or args.k > args.n:
+        _eprint(f"Error: -k must be between 1 and -n/--samples ({args.n}); got {args.k}.")
+        return 2
+    jobs = max(1, args.jobs)
 
     tasks_dir = Path(args.tasks)
     tasks = discover_tasks(tasks_dir, only=args.task or None)
@@ -59,13 +83,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     out_root = Path(args.output)
     samples_dir = out_root / safe_model_dir(args.model)
     # Sandbox scratch lives inside the output tree so container runtimes can
-    # bind-mount it (Docker Desktop does not share the system temp dir).
+    # bind-mount it (Docker Desktop does not share the system temp dir). Create
+    # it once up front so parallel workers don't race on first creation.
     scratch_dir = out_root / ".sandbox"
+    scratch_dir.mkdir(parents=True, exist_ok=True)
 
     _eprint(
         f"\nModel: {args.model}  (provider: {args.provider})\n"
         f"Tasks: {len(tasks)} from {tasks_dir} (v{task_set_version})  "
-        f"N={args.n}  k={args.k}  temperature={args.temperature}  timeout={args.timeout}s\n"
+        f"N={args.n}  k={args.k}  temperature={args.temperature}  "
+        f"timeout={args.timeout}s  jobs={jobs}\n"
     )
 
     metric = f"pass@{args.k}"
@@ -85,17 +112,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         total_input += sum(s.input_tokens for s in samples)
         total_output += sum(s.output_tokens for s in samples)
 
-        results = [
-            run_sample(
-                task,
-                sample,
-                timeout=args.timeout,
-                memory=args.memory,
-                cpus=args.cpus,
-                scratch_dir=scratch_dir,
-            )
-            for sample in samples
-        ]
+        results = _evaluate_samples(
+            task,
+            samples,
+            timeout=args.timeout,
+            memory=args.memory,
+            cpus=args.cpus,
+            scratch_dir=scratch_dir,
+            jobs=jobs,
+        )
         summary = summarize_task(task.id, results, args.n, args.k)
         task_summaries.append(summary)
 
@@ -129,6 +154,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     _eprint(f"Report: {json_path}")
     _eprint(f"Markdown: {md_path}\n")
+    return 0
+
+
+def cmd_list_tasks(args: argparse.Namespace) -> int:
+    tasks_dir = Path(args.tasks)
+    tasks = discover_tasks(tasks_dir, only=args.task or None)
+    version = read_version(tasks_dir)
+    print(f"{len(tasks)} task(s) in {tasks_dir} (v{version}):")
+    for task in tasks:
+        print(f"  {task.id:<30} {task.framework}")
     return 0
 
 
@@ -176,12 +211,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--memory", default="256m", help="Container memory limit (default: 256m).")
     run.add_argument("--cpus", type=float, default=1.0, help="Container CPU limit (default: 1.0).")
+    run.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Evaluate this many samples in parallel containers (default: 1).",
+    )
     run.add_argument("--output", default="results", help="Output directory (default: ./results).")
     run.add_argument("--base-url", help="Override the provider base URL.")
     run.add_argument("--api-key", help="Override the API key (prefer env vars).")
     run.add_argument("--config-dir", help="Directory containing providers.yaml + pricing.yaml.")
     run.add_argument("--sandbox", help="Directory containing the sandbox Dockerfile.")
     run.set_defaults(func=cmd_run)
+
+    ls = sub.add_parser("list-tasks", help="List available tasks and their test framework.")
+    ls.add_argument("--tasks", default="tasks", help="Tasks directory (default: ./tasks).")
+    ls.add_argument(
+        "--task", action="append", help="Show only this task id (repeatable). Default: all."
+    )
+    ls.set_defaults(func=cmd_list_tasks)
     return parser
 
 
