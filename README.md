@@ -13,7 +13,7 @@ reports the fraction that pass. No GPU, no local model weights, no Bundler.
 
 ```text
 Model: claude-sonnet-4-6  (provider: anthropic)
-Tasks: 10 from tasks (v0.1.0)  N=5  temperature=0.2  timeout=10s
+Tasks: 16 from tasks (v0.2.0)  N=5  k=1  temperature=0.2  timeout=10s
 
   001_fizzbuzz                 pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
   002_palindrome               pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
@@ -100,10 +100,15 @@ ruby-llm-eval run \
   --provider openai --model gpt-4o \
   --tasks ./tasks \      # task directory (default: ./tasks)
   -n 5 \                 # completions per task (default: 5)
+  -k 1 \                 # the k in pass@k; must be <= n (default: 1)
   --temperature 0.2 \    # sampling temperature (default: 0.2)
   --timeout 10 \         # per-test timeout in seconds (default: 10)
   --task 003_two_sum     # run a single task (repeatable); default: all
 ```
+
+To estimate **pass@k for k > 1**, sample more completions and raise `-k`, e.g.
+`-n 10 -k 5`. pass@1 uses the standard unbiased estimator from the HumanEval
+paper, so larger k is statistically sound.
 
 Run `ruby-llm-eval run --help` for the full list.
 
@@ -119,7 +124,7 @@ Run `ruby-llm-eval run --help` for the full list.
 | `gpt-4o-mini` | 74.0% | $0.01 |
 
 Scores are pass@1 over N=5 samples per task at temperature 0.2 on task set
-v0.1.0. The task-set version is recorded in every report so runs stay
+v0.2.0. The task-set version is recorded in every report so runs stay
 comparable.
 
 ## Bring your own tasks
@@ -133,6 +138,9 @@ my_private_tasks/
     ├── test.rb          # Minitest suite; `require_relative "solution"`
     └── solution_ref.rb  # reference solution (never shown to the model)
 ```
+
+Prefer RSpec? Drop a `spec.rb` (instead of `test.rb`) and it's auto-detected —
+see `tasks/016_stack` for a worked example.
 
 Point the tool at any directory:
 
@@ -170,8 +178,8 @@ is one small adapter class. See
   temperature, strip code fences, and save them under `results/<model>/<task>/`
   with token metadata.
 - **Evaluation** — write each candidate as `solution.rb` next to the task's
-  `test.rb` and run it in a throwaway Docker container. Each sample gets a
-  status: `passed`, `failed`, `timeout`, or `error`.
+  `test.rb` (or `spec.rb`) and run it in a throwaway Docker container. Each
+  sample gets a status: `passed`, `failed`, `timeout`, or `error`.
 - **Scoring** — `pass@1` per task is the fraction of samples that pass all
   assertions; the overall score is the mean across tasks. Cost is computed from
   token counts and [`configs/pricing.yaml`](configs/pricing.yaml).
@@ -189,11 +197,17 @@ Docker container started with:
 
 ## Roadmap
 
-- **RSpec support** — let tasks bring an RSpec suite, not just Minitest.
+Shipped in v0.2.0:
+
+- ✅ **RSpec support** — tasks can ship a `spec.rb` instead of `test.rb`.
+- ✅ **pass@k for k > 1** — via the `-k` flag (unbiased HumanEval estimator).
+
+Planned:
+
 - **RuboCop idiomatic-style scoring** — reward solutions that are not just
   correct but idiomatic.
 - **Rails-aware tasks** — tasks that exercise ActiveRecord, controllers, etc.
-- **pass@k for k > 1** — the estimator already supports it; expose `--k`.
+- **A shared, versioned public task set** with a community leaderboard.
 
 Contributions toward any of these are very welcome.
 

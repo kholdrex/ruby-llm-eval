@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ruby-llm-eval"
-version = "0.1.0"
+version = "0.2.0"
 description = "Ruby-first, API-first benchmark measuring how well any LLM writes Ruby code (pass@1)."
 readme = "README.md"
 license = { text = "MIT" }
