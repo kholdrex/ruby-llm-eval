@@ -1,10 +1,13 @@
-"""Locate and load repo resources: the YAML configs and the sandbox Dockerfile.
+"""Locate and load eval resources: tasks, YAML configs, and sandbox Dockerfile.
 
 The tool is normally run from a clone of the repository, so these live in
-`./configs/` and `./sandbox/`. We resolve them by walking up from the current
-directory, which keeps things working whether you run from the repo root or a
-subdirectory. ``RUBY_LLM_EVAL_CONFIG_DIR`` (or ``--config-dir``) overrides the
-configs location for installs that keep configs elsewhere.
+`./tasks/`, `./configs/`, and `./sandbox/`. We resolve them by walking up from
+the current directory, which keeps things working whether you run from the repo
+root or a subdirectory. Installed wheels also ship a copy of these defaults under
+``ruby_llm_eval/assets/`` so the CLI works outside a source checkout.
+
+``RUBY_LLM_EVAL_CONFIG_DIR`` (or ``--config-dir``) overrides the configs
+location for installs that keep configs elsewhere.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from pathlib import Path
 import yaml
 
 CONFIG_DIR_ENV = "RUBY_LLM_EVAL_CONFIG_DIR"
+PACKAGE_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 
 def _find_dir_containing(
@@ -31,8 +35,8 @@ def _find_dir_containing(
     for parent in [here, *here.parents]:
         candidates.append(parent / dir_name)
 
-    # Fall back to the directory shipped alongside the installed package.
-    candidates.append(Path(__file__).resolve().parent.parent / dir_name)
+    # Fall back to package data shipped inside installed wheels.
+    candidates.append(PACKAGE_ASSETS_DIR / dir_name)
 
     for candidate in candidates:
         if (candidate / marker).is_file():
@@ -53,6 +57,28 @@ def find_config_dir(explicit: str | None = None) -> Path:
 def find_sandbox_dir(explicit: str | None = None) -> Path:
     """Return the directory holding the sandbox Dockerfile."""
     return _find_dir_containing("sandbox", "Dockerfile", explicit)
+
+
+def find_tasks_dir(explicit: str | None = None) -> Path:
+    """Return the directory holding the bundled or user-supplied task set."""
+    if explicit:
+        return Path(explicit)
+
+    here = Path.cwd()
+    for parent in [here, *here.parents]:
+        candidate = parent / "tasks"
+        if _looks_like_tasks_dir(candidate):
+            return candidate
+
+    return _find_dir_containing("tasks", "VERSION")
+
+
+def _looks_like_tasks_dir(candidate: Path) -> bool:
+    if not candidate.is_dir():
+        return False
+    return (candidate / "VERSION").is_file() or any(
+        child.is_dir() and (child / "prompt.md").is_file() for child in candidate.iterdir()
+    )
 
 
 def load_yaml(path: Path) -> dict:

@@ -10,6 +10,8 @@
   transpose, longest common prefix, and an RSpec stack); 16 tasks total.
 - Add `--jobs` to evaluate samples in parallel containers (default: 1).
 - Add a `list-tasks` command that lists tasks and their test framework.
+- Bundle default configs, sandbox, and seed tasks in installed wheels so the CLI
+  can discover them outside a source checkout.
 - Validate that required task files exist and are non-empty, with clear
   diagnostics naming the offending file(s).
 - Add issue/PR templates and document `pass@k` + RSpec in the README.
