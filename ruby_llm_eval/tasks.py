@@ -88,14 +88,23 @@ def load_task(task_dir: Path) -> Task:
     )
 
 
+def _format_invalid_selected_task_id(task_id: str) -> str:
+    if task_id == "":
+        return "<empty>"
+    if not task_id.strip():
+        return "<blank>"
+    return task_id
+
+
 def _invalid_selected_task_ids(task_ids: list[str]) -> list[str]:
     invalid: list[str] = []
     seen: set[str] = set()
     for task_id in task_ids:
-        if task_id in {".", ".."} or "/" in task_id or "\\" in task_id:
-            if task_id not in seen:
-                invalid.append(task_id)
-                seen.add(task_id)
+        if not task_id.strip() or task_id in {".", ".."} or "/" in task_id or "\\" in task_id:
+            label = _format_invalid_selected_task_id(task_id)
+            if label not in seen:
+                invalid.append(label)
+                seen.add(label)
     return invalid
 
 
@@ -115,7 +124,7 @@ def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]
         if invalid:
             raise ValueError(
                 f"Invalid selected task id(s): {', '.join(invalid)}. "
-                "Task ids must be directory names, not paths."
+                "Task ids must be non-empty directory names, not paths."
             )
 
         seen: set[str] = set()

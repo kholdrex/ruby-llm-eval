@@ -71,7 +71,21 @@ def test_path_like_selected_task_id_raises(tmp_path, task_id):
     message = str(exc_info.value)
     assert "Invalid selected task id(s)" in message
     assert task_id in message
-    assert "Task ids must be directory names, not paths" in message
+    assert "Task ids must be non-empty directory names, not paths" in message
+
+
+@pytest.mark.parametrize(("task_id", "label"), [("", "<empty>"), ("   ", "<blank>")])
+def test_blank_selected_task_id_raises(tmp_path, task_id, label):
+    write_task(tmp_path, "001_private")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=[task_id])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert label in message
+    assert "Task ids must be non-empty directory names" in message
+    assert "Unknown task id" not in message
 
 
 def test_path_like_selected_task_ids_report_all_invalid_ids(tmp_path):
@@ -87,6 +101,20 @@ def test_path_like_selected_task_ids_report_all_invalid_ids(tmp_path):
     assert "nested/002_private" in message
     assert ".." in message
     assert "nested\\003_private" in message
+    assert "001_private" not in message
+
+
+def test_invalid_selected_task_ids_report_blank_and_path_like_ids(tmp_path):
+    write_task(tmp_path, "001_private")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["", "001_private", "../outside", "\t"])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert "<empty>" in message
+    assert "../outside" in message
+    assert "<blank>" in message
     assert "001_private" not in message
 
 
