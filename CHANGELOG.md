@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject blank or whitespace-only selected task ids before discovery so CLI diagnostics do not collapse into unclear unknown-task errors.
 - Add 5 harder tasks (string-to-integer with 32-bit clamp, bijective spreadsheet
   columns, a precedence/parentheses calculator with truncating division,
   integer-to-words, and full text justification). Task set bumped to v0.5.0
