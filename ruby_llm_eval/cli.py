@@ -127,70 +127,72 @@ def cmd_run(args: argparse.Namespace) -> int:
     scratch_dir = out_root / ".sandbox"
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
-    _eprint(
-        f"\nModel: {args.model}  (provider: {args.provider})\n"
-        f"Tasks: {len(tasks)} from {tasks_dir} (v{task_set_version})  "
-        f"N={args.n}  k={args.k}  temperature={args.temperature}  "
-        f"timeout={args.timeout}s  jobs={jobs}  style={'on' if args.style else 'off'}\n"
-    )
+    try:
+        _eprint(
+            f"\nModel: {args.model}  (provider: {args.provider})\n"
+            f"Tasks: {len(tasks)} from {tasks_dir} (v{task_set_version})  "
+            f"N={args.n}  k={args.k}  temperature={args.temperature}  "
+            f"timeout={args.timeout}s  jobs={jobs}  style={'on' if args.style else 'off'}\n"
+        )
 
-    metric = f"pass@{args.k}"
+        metric = f"pass@{args.k}"
 
-    task_summaries: list[dict] = []
-    total_input = 0
-    total_output = 0
+        task_summaries: list[dict] = []
+        total_input = 0
+        total_output = 0
 
-    for task in tasks:
-        samples = generate_for_task(
-            client,
-            task,
+        for task in tasks:
+            samples = generate_for_task(
+                client,
+                task,
+                n=args.n,
+                temperature=args.temperature,
+                out_dir=samples_dir,
+            )
+            total_input += sum(s.input_tokens for s in samples)
+            total_output += sum(s.output_tokens for s in samples)
+
+            pairs = _evaluate_samples(
+                task,
+                samples,
+                timeout=args.timeout,
+                memory=args.memory,
+                cpus=args.cpus,
+                scratch_dir=scratch_dir,
+                jobs=jobs,
+                rubocop_config=rubocop_config,
+            )
+            results = [result for result, _ in pairs]
+            offenses = [offense for _, offense in pairs] if args.style else None
+            summary = summarize_task(task.id, results, args.n, args.k, style_offenses=offenses)
+            task_summaries.append(summary)
+
+            glyphs = " ".join(_GLYPH.get(r.status, "?") for r in results)
+            line = f"  {task.id:<28} {metric} {summary['pass_at_k'] * 100:5.1f}%  [{glyphs}]"
+            style = summary["style"]
+            if style and style["clean_rate"] is not None:
+                line += f"  clean {style['clean_rate'] * 100:4.0f}%"
+            _eprint(line)
+
+        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        report = build_report(
+            model=args.model,
+            provider=args.provider,
             n=args.n,
+            k=args.k,
             temperature=args.temperature,
-            out_dir=samples_dir,
-        )
-        total_input += sum(s.input_tokens for s in samples)
-        total_output += sum(s.output_tokens for s in samples)
-
-        pairs = _evaluate_samples(
-            task,
-            samples,
             timeout=args.timeout,
-            memory=args.memory,
-            cpus=args.cpus,
-            scratch_dir=scratch_dir,
-            jobs=jobs,
-            rubocop_config=rubocop_config,
+            task_set_version=task_set_version,
+            task_summaries=task_summaries,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            pricing=pricing,
+            timestamp=timestamp,
+            style_enabled=args.style,
         )
-        results = [result for result, _ in pairs]
-        offenses = [offense for _, offense in pairs] if args.style else None
-        summary = summarize_task(task.id, results, args.n, args.k, style_offenses=offenses)
-        task_summaries.append(summary)
-
-        glyphs = " ".join(_GLYPH.get(r.status, "?") for r in results)
-        line = f"  {task.id:<28} {metric} {summary['pass_at_k'] * 100:5.1f}%  [{glyphs}]"
-        style = summary["style"]
-        if style and style["clean_rate"] is not None:
-            line += f"  clean {style['clean_rate'] * 100:4.0f}%"
-        _eprint(line)
-
-    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
-    report = build_report(
-        model=args.model,
-        provider=args.provider,
-        n=args.n,
-        k=args.k,
-        temperature=args.temperature,
-        timeout=args.timeout,
-        task_set_version=task_set_version,
-        task_summaries=task_summaries,
-        input_tokens=total_input,
-        output_tokens=total_output,
-        pricing=pricing,
-        timestamp=timestamp,
-        style_enabled=args.style,
-    )
-    json_path, md_path = write_reports(report, out_root, timestamp)
-    shutil.rmtree(scratch_dir, ignore_errors=True)
+        json_path, md_path = write_reports(report, out_root, timestamp)
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
 
     overall = report["overall_pass_at_k"]
     cost = report["cost"]
