@@ -55,3 +55,80 @@ jobs:
                   print(f"  {task['task_id']}: {task['status_counts']}")
               sys.exit(f"Expected 1.0, got {score}")
           PY
+      - name: Create temporary private tasks
+        run: |
+          mkdir -p /tmp/ruby-llm-eval-private-tasks/{900_private_double,901_private_decoy}
+          printf 'ci-private\n' > /tmp/ruby-llm-eval-private-tasks/VERSION
+
+          cat > /tmp/ruby-llm-eval-private-tasks/900_private_double/prompt.md <<'EOF'
+          Implement `double_number(n)` and return `n * 2`.
+          EOF
+          cat > /tmp/ruby-llm-eval-private-tasks/900_private_double/solution_ref.rb <<'EOF'
+          def double_number(n)
+            n * 2
+          end
+          EOF
+          cat > /tmp/ruby-llm-eval-private-tasks/900_private_double/test.rb <<'EOF'
+          require "minitest/autorun"
+          require_relative "solution"
+
+          class PrivateDoubleTest < Minitest::Test
+            def test_doubles_positive_number
+              assert_equal 14, double_number(7)
+            end
+
+            def test_doubles_zero
+              assert_equal 0, double_number(0)
+            end
+          end
+          EOF
+
+          # This decoy task intentionally has a bad reference solution. If the
+          # --task filter is ignored, the stub run should fail in addition to
+          # the report task-id assertion below.
+          cat > /tmp/ruby-llm-eval-private-tasks/901_private_decoy/prompt.md <<'EOF'
+          Implement `should_not_run`.
+          EOF
+          cat > /tmp/ruby-llm-eval-private-tasks/901_private_decoy/solution_ref.rb <<'EOF'
+          def should_not_run
+            :wrong
+          end
+          EOF
+          cat > /tmp/ruby-llm-eval-private-tasks/901_private_decoy/test.rb <<'EOF'
+          require "minitest/autorun"
+          require_relative "solution"
+
+          class PrivateDecoyTest < Minitest::Test
+            def test_decoy
+              assert_equal :ok, should_not_run
+            end
+          end
+          EOF
+      - name: Run selected private task against the stub model
+        run: >-
+          ruby-llm-eval run --provider stub --model stub -n 1
+          --tasks /tmp/ruby-llm-eval-private-tasks
+          --task 900_private_double
+          --output results-private
+      - name: Assert only selected private task passed
+        run: |
+          python - <<'PY'
+          import glob, json, sys
+
+          reports = sorted(glob.glob("results-private/run_*.json"))
+          if not reports:
+              sys.exit("Expected a private-task report in results-private/.")
+
+          latest = reports[-1]
+          report = json.load(open(latest))
+          score = report["overall_pass_at_k"]
+          task_ids = [task["task_id"] for task in report["tasks"]]
+
+          print(f"overall {report['metric']} = {score} (from {latest})")
+          print(f"tasks: {task_ids}")
+
+          if score != 1.0:
+              sys.exit(f"Expected 1.0, got {score}")
+          if task_ids != ["900_private_double"]:
+              sys.exit(f"Expected only 900_private_double to run, got {task_ids}")
+          PY
