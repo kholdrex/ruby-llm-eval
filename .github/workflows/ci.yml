@@ -36,24 +36,25 @@ jobs:
       - name: Build sandbox image
         run: docker build -t ruby-llm-eval-sandbox:latest sandbox/
       - name: Run seed tasks against the stub model
-        # The stub returns each task's reference solution, so a healthy
-        # pipeline must score 100% pass@1. This proves generate -> evaluate
-        # -> report works end to end without any API keys.
-        run: ruby-llm-eval run --provider stub --model stub -n 1 --tasks tasks
-      - name: Assert overall pass@1 == 1.0
+        # The stub returns each task's reference solution, so a healthy pipeline
+        # must score 100% pass@1 AND 100% clean (references are idiomatic). This
+        # proves generate -> evaluate -> style -> report works end to end without
+        # any API keys.
+        run: ruby-llm-eval run --provider stub --model stub -n 1 --tasks tasks --style --jobs 2
+      - name: Assert pass@1 and clean rate are both 1.0
         run: |
           python - <<'PY'
           import glob, json, sys
           latest = sorted(glob.glob("results/run_*.json"))[-1]
           report = json.load(open(latest))
           score = report["overall_pass_at_k"]
-          print(f"overall {report['metric']} = {score} (from {latest})")
-          if score != 1.0:
-              # Surface per-task statuses so a sandbox/permissions regression is
-              # easy to diagnose straight from the CI log.
+          clean = report["overall_clean_rate"]
+          print(f"overall {report['metric']} = {score}, clean = {clean} (from {latest})")
+          if score != 1.0 or clean != 1.0:
+              # Surface per-task detail so a regression is diagnosable from the log.
               for task in report["tasks"]:
-                  print(f"  {task['task_id']}: {task['status_counts']}")
-              sys.exit(f"Expected 1.0, got {score}")
+                  print(f"  {task['task_id']}: {task['status_counts']} style={task['style']}")
+              sys.exit(f"Expected pass@1=1.0 and clean=1.0, got {score} / {clean}")
           PY
       - name: Create temporary private tasks
         run: |

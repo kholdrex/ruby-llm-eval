@@ -17,6 +17,8 @@
 - Add a `list-tasks` command that lists tasks and their test framework.
 - Bundle default configs, sandbox, and seed tasks in installed wheels so the CLI
   can discover them outside a source checkout.
+- Add `--style`: lint each candidate with RuboCop in the sandbox and report a
+  `clean` (offence-free) rate alongside pass@k. Ruleset in `configs/rubocop.yml`.
 - Validate that required task files exist and are non-empty, with clear
   diagnostics naming the offending file(s).
 - Add issue/PR templates and document `pass@k` + RSpec in the README.

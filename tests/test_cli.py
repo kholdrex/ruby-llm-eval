@@ -6,10 +6,18 @@ TASKS_DIR = str(Path(__file__).resolve().parent.parent / "tasks")
 
 
 def test_parser_accepts_run_flags():
-    args = build_parser().parse_args(["run", "--model", "m", "--jobs", "4", "-n", "10", "-k", "3"])
+    args = build_parser().parse_args(
+        ["run", "--model", "m", "--jobs", "4", "-n", "10", "-k", "3", "--style"]
+    )
     assert args.n == 10
     assert args.k == 3
     assert args.jobs == 4
+    assert args.style is True
+
+
+def test_style_defaults_off():
+    args = build_parser().parse_args(["run", "--model", "m"])
+    assert args.style is False
 
 
 def test_list_tasks_lists_frameworks(capsys):

@@ -13,7 +13,7 @@ def _results(statuses):
     return [SampleResult("t", i, s) for i, s in enumerate(statuses)]
 
 
-def _report(summaries, *, k=1, input_tokens=0, output_tokens=0):
+def _report(summaries, *, k=1, input_tokens=0, output_tokens=0, style_enabled=False):
     return build_report(
         model="demo-model",
         provider="stub",
@@ -27,6 +27,7 @@ def _report(summaries, *, k=1, input_tokens=0, output_tokens=0):
         output_tokens=output_tokens,
         pricing=PRICING,
         timestamp="20990101T000000",
+        style_enabled=style_enabled,
     )
 
 
@@ -89,3 +90,36 @@ def test_render_markdown_header_reflects_k():
     summaries = [summarize_task("a", _results(["passed", "failed"]), n=2, k=2)]
     md = render_markdown(_report(summaries, k=2))
     assert "| Model | pass@2 | Cost |" in md
+
+
+def test_style_is_none_when_not_measured():
+    summary = summarize_task("a", _results(["passed", "passed"]), n=2)
+    assert summary["style"] is None
+
+
+def test_style_aggregates_offenses():
+    # 2 clean (0 offenses), 1 with 3 offenses, 1 unmeasured (None)
+    summary = summarize_task("a", _results(["passed"] * 4), n=4, style_offenses=[0, 0, 3, None])
+    style = summary["style"]
+    assert style["measured"] == 3
+    assert style["clean"] == 2
+    assert style["clean_rate"] == 0.6667  # round(2/3, 4)
+    assert style["avg_offenses"] == 1.0
+
+
+def test_build_report_overall_clean_rate_and_flag():
+    summaries = [
+        summarize_task("a", _results(["passed", "passed"]), n=2, style_offenses=[0, 0]),
+        summarize_task("b", _results(["passed", "passed"]), n=2, style_offenses=[0, 4]),
+    ]
+    report = _report(summaries, style_enabled=True)
+    assert report["style_enabled"] is True
+    # clean rates 1.0 and 0.5 -> mean 0.75
+    assert report["overall_clean_rate"] == 0.75
+
+
+def test_render_markdown_adds_clean_column_when_styled():
+    summaries = [summarize_task("a", _results(["passed"]), n=1, style_offenses=[0])]
+    md = render_markdown(_report(summaries, style_enabled=True))
+    assert "| Model | pass@1 | clean | Cost |" in md
+    assert "clean | passed/N" in md
