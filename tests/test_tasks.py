@@ -388,4 +388,10 @@ def test_harder_tasks_present():
 
 
 def test_version_is_recorded():
-    assert read_version(TASKS_DIR) == "0.5.0"
+    assert read_version(TASKS_DIR) == "0.6.0"
+
+
+def test_rails_category_count():
+    rails = [t for t in discover_tasks(TASKS_DIR) if t.category == "rails"]
+    assert len(rails) >= 14
+    assert all(t.framework == "minitest" for t in rails)
