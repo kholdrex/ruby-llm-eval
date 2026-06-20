@@ -100,6 +100,38 @@ def test_load_task_rejects_blank_required_files(tmp_path, filename, overrides):
     assert "empty required file" in message
 
 
+@pytest.mark.parametrize("filename", [PROMPT_FILE, MINITEST_FILE, REFERENCE_FILE])
+def test_load_task_rejects_required_files_with_invalid_utf8(tmp_path, filename):
+    task_dir = write_task(tmp_path, "001_bad_encoding")
+    (task_dir / filename).write_bytes(b"valid prefix\xff\xfe\n")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_bad_encoding" in message
+    assert filename in message
+    assert "must be UTF-8 text" in message
+    assert "offset" in message
+    assert exc_info.value.__cause__ is None
+
+
+def test_load_task_rejects_rspec_required_file_with_invalid_utf8(tmp_path):
+    task_dir = write_task(tmp_path, "001_bad_rspec_encoding")
+    (task_dir / MINITEST_FILE).unlink()
+    spec_file = TEST_FILES["rspec"]
+    (task_dir / spec_file).write_bytes(b"valid prefix\xff\xfe\n")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_bad_rspec_encoding" in message
+    assert spec_file in message
+    assert "must be UTF-8 text" in message
+    assert "offset" in message
+
+
 def test_detects_minitest_framework():
     task = load_task(TASKS_DIR / "001_fizzbuzz")
     assert task.framework == "minitest"
