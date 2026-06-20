@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add CI coverage for selecting a private task with the stub provider.
 - Improve selected custom-task diagnostics so malformed task directories requested by id report missing `prompt.md` directly instead of looking like unknown task ids.
 
 ## 0.2.0
