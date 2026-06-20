@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Retry provider requests without `temperature` when a model rejects it (e.g.
+  Claude Opus 4.8 and reasoning models return 400), instead of failing the run.
+- Add 8 more Rails tasks (has_many :through, enum, strong params, custom
+  as_json, conditional validation, parameterized scope, service object, update
+  action) and a per-category report breakdown. Task set v0.6.0 (35 tasks, 14 rails).
 - Reject selected task ids with leading or trailing whitespace before discovery with clearer invalid-id diagnostics.
 - Add regression coverage for selected malformed tasks missing `solution_ref.rb`, missing a test file, or shipping both `test.rb` and `spec.rb`.
 - Reject blank or whitespace-only selected task ids before discovery so CLI diagnostics do not collapse into unclear unknown-task errors.

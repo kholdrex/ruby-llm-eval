@@ -57,6 +57,26 @@ def _post_json(url: str, headers: dict[str, str], payload: dict) -> dict:
         raise ModelError(f"Request to {url} failed: {exc.reason}") from exc
 
 
+def _post_chat(url: str, headers: dict[str, str], payload: dict) -> dict:
+    """POST a chat payload, retrying without ``temperature`` if rejected.
+
+    Some models (e.g. reasoning models, Claude Opus 4.8) do not accept a custom
+    ``temperature`` and return a 400. Rather than failing the whole run, drop
+    the field and retry once so the model's default sampling is used.
+    """
+    try:
+        return _post_json(url, headers, payload)
+    except ModelError as exc:
+        message = str(exc).lower()
+        rejected = "temperature" in message and (
+            "400" in message or "unsupported" in message or "deprecated" in message
+        )
+        if rejected and "temperature" in payload:
+            payload = {k: v for k, v in payload.items() if k != "temperature"}
+            return _post_json(url, headers, payload)
+        raise
+
+
 class ModelClient:
     """Base class. Subclasses implement :meth:`complete`."""
 
@@ -86,7 +106,7 @@ class OpenAIClient(ModelClient):
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         }
-        body = _post_json(url, headers, payload)
+        body = _post_chat(url, headers, payload)
         try:
             text = body["choices"][0]["message"]["content"]
             usage = body.get("usage", {})
@@ -117,7 +137,7 @@ class AnthropicClient(ModelClient):
             "temperature": temperature,
             "messages": [{"role": "user", "content": prompt}],
         }
-        body = _post_json(url, headers, payload)
+        body = _post_chat(url, headers, payload)
         try:
             text = "".join(
                 block.get("text", "") for block in body["content"] if block.get("type") == "text"
