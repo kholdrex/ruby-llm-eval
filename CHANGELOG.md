@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject path-like selected task ids before task discovery with clearer directory-name diagnostics.
 - Clean up evaluation sandbox scratch directories even when a task run fails before report generation.
 - Expand Rails coverage: add ActiveRecord callbacks (020), a migration (021),
   and a JSON controller driven by rack-test (022). The sandbox now also installs
