@@ -88,6 +88,50 @@ def test_blank_selected_task_id_raises(tmp_path, task_id, label):
     assert "Unknown task id" not in message
 
 
+@pytest.mark.parametrize("task_id", [" 001_private", "001_private ", "\t001_private"])
+def test_padded_selected_task_id_raises(tmp_path, task_id):
+    write_task(tmp_path, "001_private")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=[task_id])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert task_id in message
+    assert "Task ids must be non-empty directory names" in message
+    assert "Unknown task id" not in message
+
+
+def test_padded_selected_task_ids_report_all_invalid_ids(tmp_path):
+    write_task(tmp_path, "001_private")
+    leading_padded = " 002_private"
+    trailing_padded = "003_private "
+    tab_padded = "\t004_private"
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(
+            tmp_path,
+            only=["001_private", leading_padded, trailing_padded, tab_padded],
+        )
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert leading_padded in message
+    assert trailing_padded in message
+    assert tab_padded in message
+    assert "001_private" not in message
+
+
+def test_padded_selected_task_id_is_rejected_before_unknown_handling(tmp_path):
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=[" 999_nope"])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert " 999_nope" in message
+    assert "Unknown task id" not in message
+
+
 def test_path_like_selected_task_ids_report_all_invalid_ids(tmp_path):
     write_task(tmp_path, "001_private")
 
