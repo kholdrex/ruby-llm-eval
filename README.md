@@ -96,17 +96,22 @@ ruby-llm-eval list-tasks --tasks ../ruby_eval_private_tasks
 ruby-llm-eval list-tasks --tasks ../ruby_eval_private_tasks --task 001_invoice_total
 ```
 
-Then run the selected private task with the built-in `stub` provider. It returns
-that task's `solution_ref.rb`, so it exercises the full generate → evaluate →
-report pipeline offline — no API key, no provider spend:
+Then run a no-Docker plumbing check with the built-in `stub` provider. It
+returns that task's `solution_ref.rb`, skips the sandbox, and writes reports
+marked `evaluation_mode: "offline_stub"` / `sandboxed: false` so you can verify
+selection without an API key, Docker, or provider spend:
 
 ```bash
 ruby-llm-eval run \
   --provider stub --model stub \
+  --offline-stub \
   --tasks ../ruby_eval_private_tasks \
   --task 001_invoice_total \
   -n 1
 ```
+
+To exercise the real Docker sandbox with the stub reference solution, run the
+same command without `--offline-stub`.
 
 When the stub run is green, add your API key and switch to a real provider. The
 first paid run below keeps `-n 1` so you can confirm the path before spending on
@@ -131,8 +136,8 @@ You'll get a live per-task readout, plus two files in `results/`:
 
 ### Try the bundled tasks with no API key
 
-The same `stub` provider works against the bundled task set if you just want to
-watch the pipeline run offline:
+The same `stub` provider works against the bundled task set if you want to watch
+the Docker-backed pipeline run without provider spend:
 
 ```bash
 ruby-llm-eval run --provider stub --model stub
@@ -206,12 +211,17 @@ my_private_tasks/
 Prefer RSpec? Drop a `spec.rb` (instead of `test.rb`) and it's auto-detected —
 see `tasks/016_stack` for a worked example.
 
-Point the tool at any directory. A good workflow is: list the tasks, run the
-stub provider against one selected task, then switch to the real provider once
-the harness is green:
+Point the tool at any directory. A good workflow is: list the tasks, run an
+offline stub selection check, run the Docker-backed stub provider when Docker is
+available, then switch to the real provider once the harness is green:
 
 ```bash
 ruby-llm-eval list-tasks --tasks ../my_private_tasks
+
+ruby-llm-eval run --provider stub --model stub --offline-stub \
+  --tasks ../my_private_tasks \
+  --task 001_invoice_total \
+  -n 1
 
 ruby-llm-eval run --provider stub --model stub \
   --tasks ../my_private_tasks \
