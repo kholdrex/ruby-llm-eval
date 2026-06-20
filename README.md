@@ -174,15 +174,17 @@ A real run on the bundled task set (v0.5.0, 27 tasks), one sample per task
 
 | Model | pass@1 | clean (idiomatic) | Cost |
 | --- | --- | --- | --- |
-| `claude-sonnet-4-6` | 96.3% | 51.8% | $0.08 |
+| `gpt-4o-mini` | 96.3% | 66.7% | $0.003 |
+| `claude-haiku-4-5` | 96.3% | 37.0% | $0.03 |
 | `gpt-4o` | 92.6% | 55.6% | $0.05 |
+| `claude-sonnet-4-6` | 96.3% | 51.8% | $0.08 |
 
-The two flagships fail on **different** tasks — Sonnet on the 32-bit `atoi`
-task, gpt-4o on the calculator and integer-to-words tasks — so even at `-n 1`
-the harder tasks separate them on correctness, while the RuboCop **`clean`**
-column adds an idiomatic-style axis. Bring your own private and harder tasks
-(see below) to sharpen the signal further. The task-set version is recorded in
-every report so runs stay comparable.
+Reading it: the harder tasks (023–027) separate the models — each fails one or
+two — and here the cheapest model, `gpt-4o-mini`, is no worse on correctness and
+the most idiomatic, at roughly 25× lower cost than Sonnet. That price/quality
+call is exactly what the tool is meant to inform. Note `-n 1` is noisy (a single
+sample decides each task) — raise `-n`/`-k` for a stable ranking. The task-set
+version is recorded in every report so runs stay comparable.
 
 ## Bring your own tasks
 
