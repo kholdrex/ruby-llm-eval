@@ -99,6 +99,18 @@ def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]
     if not tasks_dir.is_dir():
         raise FileNotFoundError(f"Tasks directory not found: {tasks_dir}")
 
+    if only:
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        duplicate_seen: set[str] = set()
+        for task_id in only:
+            if task_id in seen and task_id not in duplicate_seen:
+                duplicates.append(task_id)
+                duplicate_seen.add(task_id)
+            seen.add(task_id)
+        if duplicates:
+            raise ValueError(f"Duplicate task id(s): {', '.join(duplicates)}")
+
     selected = set(only) if only else None
 
     tasks: list[Task] = []

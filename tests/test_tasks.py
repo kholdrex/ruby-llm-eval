@@ -50,6 +50,17 @@ def test_unknown_task_id_raises():
         discover_tasks(TASKS_DIR, only=["999_nope"])
 
 
+def test_duplicate_selected_task_id_raises(tmp_path):
+    write_task(tmp_path, "001_private")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001_private", "001_private"])
+
+    message = str(exc_info.value)
+    assert "Duplicate task id(s)" in message
+    assert "001_private" in message
+
+
 def test_selected_malformed_task_reports_missing_prompt(tmp_path):
     (tmp_path / "001_missing_prompt").mkdir()
 
