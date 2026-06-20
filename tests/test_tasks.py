@@ -187,6 +187,44 @@ def test_selected_malformed_task_reports_missing_prompt(tmp_path):
     assert "missing prompt.md" in message
 
 
+def test_selected_malformed_task_reports_missing_reference(tmp_path):
+    task_dir = write_task(tmp_path, "001_missing_reference")
+    (task_dir / REFERENCE_FILE).unlink()
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001_missing_reference"])
+
+    message = str(exc_info.value)
+    assert "001_missing_reference" in message
+    assert "missing solution_ref.rb" in message
+
+
+def test_selected_malformed_task_reports_missing_test_file(tmp_path):
+    task_dir = write_task(tmp_path, "001_missing_test")
+    (task_dir / MINITEST_FILE).unlink()
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001_missing_test"])
+
+    message = str(exc_info.value)
+    assert "001_missing_test" in message
+    assert "has no test file" in message
+    assert "test.rb / spec.rb" in message
+
+
+def test_selected_malformed_task_reports_multiple_test_files(tmp_path):
+    task_dir = write_task(tmp_path, "001_multiple_tests")
+    (task_dir / TEST_FILES["rspec"]).write_text('require_relative "solution"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001_multiple_tests"])
+
+    message = str(exc_info.value)
+    assert "001_multiple_tests" in message
+    assert "multiple test files" in message
+    assert "test.rb / spec.rb" in message
+
+
 def test_task_has_reference_and_test():
     task = load_task(TASKS_DIR / "001_fizzbuzz")
     assert "fizzbuzz" in task.prompt.lower()
