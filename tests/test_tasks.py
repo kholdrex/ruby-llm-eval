@@ -262,5 +262,12 @@ def test_rails_controller_task_present():
     assert "rack/test" in task.test
 
 
+def test_harder_tasks_present():
+    for task_id in ("025_basic_calculator", "027_text_justification"):
+        task = load_task(TASKS_DIR / task_id)
+        assert task.framework == "minitest"
+        assert task.prompt.strip()
+
+
 def test_version_is_recorded():
-    assert read_version(TASKS_DIR) == "0.4.0"
+    assert read_version(TASKS_DIR) == "0.5.0"
