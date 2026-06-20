@@ -40,8 +40,14 @@ class Task:
         return (self.path / REFERENCE_FILE).read_text(encoding="utf-8")
 
 
-def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+def _read_required(task_dir: Path, filename: str) -> str:
+    try:
+        return (task_dir / filename).read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"Task '{task_dir.name}' required file {filename} must be UTF-8 text "
+            f"(invalid byte at offset {exc.start})."
+        ) from None
 
 
 def _detect_framework(task_dir: Path) -> tuple[str, str]:
@@ -67,7 +73,7 @@ def load_task(task_dir: Path) -> Task:
     framework, test_filename = _detect_framework(task_dir)
 
     required = (PROMPT_FILE, REFERENCE_FILE, test_filename)
-    contents = {name: _read(task_dir / name) for name in required}
+    contents = {name: _read_required(task_dir, name) for name in required}
     empty = [name for name, content in contents.items() if not content.strip()]
     if empty:
         raise ValueError(f"Task '{task_dir.name}' has empty required file(s): {', '.join(empty)}")
