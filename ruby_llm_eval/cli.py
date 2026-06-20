@@ -10,8 +10,15 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
-from .config import find_config_dir, find_sandbox_dir, find_tasks_dir, load_pricing, load_providers
-from .evaluate import IMAGE_TAG, docker_available, ensure_image, run_sample
+from .config import (
+    find_config_dir,
+    find_sandbox_dir,
+    find_tasks_dir,
+    load_pricing,
+    load_providers,
+    load_rubocop_config,
+)
+from .evaluate import IMAGE_TAG, docker_available, ensure_image, run_rubocop, run_sample
 from .generate import generate_for_task, safe_model_dir
 from .model_client import build_client
 from .report import build_report, summarize_task, write_reports
@@ -25,17 +32,42 @@ def _eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
 
 
-def _evaluate_samples(task, samples, *, timeout, memory, cpus, scratch_dir, jobs):
+def _process_sample(task, sample, *, timeout, memory, cpus, scratch_dir, rubocop_config):
+    """Evaluate a sample for correctness and, if requested, RuboCop style."""
+    result = run_sample(
+        task, sample, timeout=timeout, memory=memory, cpus=cpus, scratch_dir=scratch_dir
+    )
+    offenses = None
+    if rubocop_config is not None:
+        offenses = run_rubocop(
+            task,
+            sample,
+            rubocop_config=rubocop_config,
+            timeout=timeout,
+            memory=memory,
+            cpus=cpus,
+            scratch_dir=scratch_dir,
+        )
+    return result, offenses
+
+
+def _evaluate_samples(task, samples, *, timeout, memory, cpus, scratch_dir, jobs, rubocop_config):
     """Run a task's samples in the sandbox, optionally in parallel.
 
     Each sample is fully isolated (its own work dir + container name), so
     concurrent runs are safe. ``pool.map`` preserves order, so results stay
-    aligned with ``samples``.
+    aligned with ``samples``. Returns a list of ``(SampleResult, offenses)``.
     """
 
     def run_one(sample):
-        return run_sample(
-            task, sample, timeout=timeout, memory=memory, cpus=cpus, scratch_dir=scratch_dir
+        return _process_sample(
+            task,
+            sample,
+            timeout=timeout,
+            memory=memory,
+            cpus=cpus,
+            scratch_dir=scratch_dir,
+            rubocop_config=rubocop_config,
         )
 
     if jobs <= 1 or len(samples) <= 1:
@@ -69,6 +101,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
         return 2
 
+    rubocop_config = None
+    if args.style:
+        rubocop_config = load_rubocop_config(config_dir)
+        if rubocop_config is None:
+            _eprint("Error: --style needs configs/rubocop.yml but it was not found.")
+            return 2
+
     _eprint(f"Building/locating sandbox image {IMAGE_TAG} ...")
     ensure_image(find_sandbox_dir(args.sandbox))
 
@@ -92,7 +131,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         f"\nModel: {args.model}  (provider: {args.provider})\n"
         f"Tasks: {len(tasks)} from {tasks_dir} (v{task_set_version})  "
         f"N={args.n}  k={args.k}  temperature={args.temperature}  "
-        f"timeout={args.timeout}s  jobs={jobs}\n"
+        f"timeout={args.timeout}s  jobs={jobs}  style={'on' if args.style else 'off'}\n"
     )
 
     metric = f"pass@{args.k}"
@@ -112,7 +151,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         total_input += sum(s.input_tokens for s in samples)
         total_output += sum(s.output_tokens for s in samples)
 
-        results = _evaluate_samples(
+        pairs = _evaluate_samples(
             task,
             samples,
             timeout=args.timeout,
@@ -120,12 +159,19 @@ def cmd_run(args: argparse.Namespace) -> int:
             cpus=args.cpus,
             scratch_dir=scratch_dir,
             jobs=jobs,
+            rubocop_config=rubocop_config,
         )
-        summary = summarize_task(task.id, results, args.n, args.k)
+        results = [result for result, _ in pairs]
+        offenses = [offense for _, offense in pairs] if args.style else None
+        summary = summarize_task(task.id, results, args.n, args.k, style_offenses=offenses)
         task_summaries.append(summary)
 
         glyphs = " ".join(_GLYPH.get(r.status, "?") for r in results)
-        _eprint(f"  {task.id:<28} {metric} {summary['pass_at_k'] * 100:5.1f}%  [{glyphs}]")
+        line = f"  {task.id:<28} {metric} {summary['pass_at_k'] * 100:5.1f}%  [{glyphs}]"
+        style = summary["style"]
+        if style and style["clean_rate"] is not None:
+            line += f"  clean {style['clean_rate'] * 100:4.0f}%"
+        _eprint(line)
 
     timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
     report = build_report(
@@ -141,6 +187,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         output_tokens=total_output,
         pricing=pricing,
         timestamp=timestamp,
+        style_enabled=args.style,
     )
     json_path, md_path = write_reports(report, out_root, timestamp)
     shutil.rmtree(scratch_dir, ignore_errors=True)
@@ -148,10 +195,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     overall = report["overall_pass_at_k"]
     cost = report["cost"]
     cost_str = f"${cost['usd']:.4f}" if cost["priced"] else "n/a (add model to pricing.yaml)"
-    _eprint(
+    summary_line = (
         f"\nOverall {metric}: {overall * 100:.1f}%   "
         f"tokens: {total_input} in / {total_output} out   cost: {cost_str}"
     )
+    if args.style and report["overall_clean_rate"] is not None:
+        summary_line += f"   clean: {report['overall_clean_rate'] * 100:.1f}%"
+    _eprint(summary_line)
     _eprint(f"Report: {json_path}")
     _eprint(f"Markdown: {md_path}\n")
     return 0
@@ -222,6 +272,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Evaluate this many samples in parallel containers (default: 1).",
+    )
+    run.add_argument(
+        "--style",
+        action="store_true",
+        help="Also score idiomatic style with RuboCop (needs configs/rubocop.yml).",
     )
     run.add_argument("--output", default="results", help="Output directory (default: ./results).")
     run.add_argument("--base-url", help="Override the provider base URL.")

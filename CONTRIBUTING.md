@@ -145,6 +145,9 @@ That's the whole contribution surface — no registry to edit, no code to touch.
   model isn't failed on a naming guess.
 - **Mind the difficulty mix.** A range from warm-ups to genuinely tricky tasks
   makes the score more informative.
+- **Keep the reference idiomatic.** Run `--style` and confirm your
+  `solution_ref.rb` is RuboCop-clean under
+  [`configs/rubocop.yml`](configs/rubocop.yml); the reference is the bar.
 
 ### Using RSpec instead of Minitest
 

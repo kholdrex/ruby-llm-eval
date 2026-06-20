@@ -1,0 +1,43 @@
+# RuboCop configuration used by `ruby-llm-eval run --style`.
+#
+# The goal is to score *idiomatic style*, not project boilerplate. We keep the
+# Style, Layout, and Lint cops (which catch un-idiomatic Ruby) and turn off cops
+# that only make sense for full applications — size/complexity metrics, the
+# frozen-string-literal magic comment, and top-level documentation. Edit freely
+# to match your house style; it is written into the sandbox next to the
+# candidate solution at eval time.
+
+AllCops:
+  TargetRubyVersion: 3.3
+  NewCops: disable
+  SuggestExtensions: false
+
+# A single tiny solution file doesn't need these.
+Style/FrozenStringLiteralComment:
+  Enabled: false
+Style/Documentation:
+  Enabled: false
+
+# Quote style is a community coin-flip (single vs double); don't penalize a
+# consistent choice — that's house style, not idiom.
+Style/StringLiterals:
+  Enabled: false
+
+# Parameter names are dictated by each task's required signature (e.g. `n`, `s`),
+# so a model following the prompt must not lose points for short names.
+Naming/MethodParameterName:
+  Enabled: false
+
+# Size/complexity is about structure, not idiom — out of scope for this score.
+Metrics/MethodLength:
+  Enabled: false
+Metrics/AbcSize:
+  Enabled: false
+Metrics/CyclomaticComplexity:
+  Enabled: false
+Metrics/PerceivedComplexity:
+  Enabled: false
+Metrics/BlockLength:
+  Enabled: false
+Metrics/ClassLength:
+  Enabled: false

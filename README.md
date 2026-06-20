@@ -104,6 +104,7 @@ ruby-llm-eval run \
   --temperature 0.2 \    # sampling temperature (default: 0.2)
   --timeout 10 \         # per-test timeout in seconds (default: 10)
   --jobs 4 \             # evaluate this many samples in parallel (default: 1)
+  --style \              # also score idiomatic style with RuboCop (slower)
   --task 003_two_sum     # run a single task (repeatable); default: all
 ```
 
@@ -191,6 +192,18 @@ is one small adapter class. See
   assertions; the overall score is the mean across tasks. Cost is computed from
   token counts and [`configs/pricing.yaml`](configs/pricing.yaml).
 
+### Idiomatic-style scoring (`--style`)
+
+Correctness isn't the whole story — two solutions can both pass while one reads
+like idiomatic Ruby and the other doesn't. With `--style`, each candidate is
+also linted with **RuboCop** inside the same sandbox, and the report gains a
+`clean` column: the fraction of samples with **zero** offences.
+
+The ruleset lives in [`configs/rubocop.yml`](configs/rubocop.yml) and targets
+idiom (redundant `return`, `== nil`, non-guard clauses, spacing, …) rather than
+house style — quote style and the task-mandated short parameter names are not
+penalized. Edit it to match your own conventions.
+
 ### Safety
 
 Model-generated code is never run on your host. Every sample executes in a
@@ -208,11 +221,11 @@ Shipped in v0.2.0:
 
 - ✅ **RSpec support** — tasks can ship a `spec.rb` instead of `test.rb`.
 - ✅ **pass@k for k > 1** — via the `-k` flag (unbiased HumanEval estimator).
+- ✅ **RuboCop idiomatic-style scoring** — via `--style` (a `clean` column).
+- ✅ **Parallel evaluation** — via `--jobs`.
 
 Planned:
 
-- **RuboCop idiomatic-style scoring** — reward solutions that are not just
-  correct but idiomatic.
 - **Rails-aware tasks** — tasks that exercise ActiveRecord, controllers, etc.
 - **A shared, versioned public task set** with a community leaderboard.
 

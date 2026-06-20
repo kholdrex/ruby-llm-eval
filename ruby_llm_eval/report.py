@@ -17,8 +17,34 @@ from .pass_k import pass_at_k
 STATUSES = (STATUS_PASSED, STATUS_FAILED, STATUS_TIMEOUT, STATUS_ERROR)
 
 
-def summarize_task(task_id: str, results: list[SampleResult], n: int, k: int = 1) -> dict:
-    """Per-task pass@k plus a breakdown of sample statuses."""
+def _summarize_style(style_offenses: list[int | None] | None) -> dict | None:
+    """Aggregate per-sample RuboCop offense counts into a style summary.
+
+    Returns None when style was not measured. ``clean`` counts offence-free
+    samples; ``clean_rate`` and ``avg_offenses`` are None if nothing linted.
+    """
+    if style_offenses is None:
+        return None
+    counted = [o for o in style_offenses if o is not None]
+    if not counted:
+        return {"measured": 0, "clean": 0, "clean_rate": None, "avg_offenses": None}
+    clean = sum(1 for o in counted if o == 0)
+    return {
+        "measured": len(counted),
+        "clean": clean,
+        "clean_rate": round(clean / len(counted), 4),
+        "avg_offenses": round(sum(counted) / len(counted), 2),
+    }
+
+
+def summarize_task(
+    task_id: str,
+    results: list[SampleResult],
+    n: int,
+    k: int = 1,
+    style_offenses: list[int | None] | None = None,
+) -> dict:
+    """Per-task pass@k, a breakdown of sample statuses, and optional style."""
     statuses = [r.status for r in results]
     passed = statuses.count(STATUS_PASSED)
     return {
@@ -27,6 +53,7 @@ def summarize_task(task_id: str, results: list[SampleResult], n: int, k: int = 1
         "passed": passed,
         "pass_at_k": pass_at_k(n, passed, k),
         "status_counts": {s: statuses.count(s) for s in STATUSES},
+        "style": _summarize_style(style_offenses),
     }
 
 
@@ -54,10 +81,17 @@ def build_report(
     output_tokens: int,
     pricing: dict,
     timestamp: str,
+    style_enabled: bool = False,
 ) -> dict:
     overall = (
         sum(t["pass_at_k"] for t in task_summaries) / len(task_summaries) if task_summaries else 0.0
     )
+    clean_rates = [
+        t["style"]["clean_rate"]
+        for t in task_summaries
+        if t.get("style") and t["style"]["clean_rate"] is not None
+    ]
+    overall_clean = round(sum(clean_rates) / len(clean_rates), 4) if clean_rates else None
     return {
         "schema_version": 2,
         "timestamp": timestamp,
@@ -70,6 +104,8 @@ def build_report(
         "task_set_version": task_set_version,
         "metric": f"pass@{k}",
         "overall_pass_at_k": round(overall, 4),
+        "style_enabled": style_enabled,
+        "overall_clean_rate": overall_clean,
         "tasks": task_summaries,
         "cost": compute_cost(input_tokens, output_tokens, model, pricing),
     }
@@ -81,11 +117,42 @@ def _fmt_cost(cost: dict) -> str:
     return f"${cost['usd']:.4f}"
 
 
+def _clean_pct(rate: float | None) -> str:
+    return f"{rate * 100:.0f}%" if rate is not None else "n/a"
+
+
 def render_markdown(report: dict) -> str:
-    """A copy-pasteable summary plus a per-task breakdown."""
+    """A copy-pasteable summary plus a per-task breakdown.
+
+    When style scoring is enabled, a ``clean`` column (RuboCop offence-free
+    rate) is added to both tables.
+    """
     metric = report["metric"]  # e.g. "pass@1" or "pass@3"
     cost = _fmt_cost(report["cost"])
     overall_pct = f"{report['overall_pass_at_k'] * 100:.1f}%"
+    style_on = report.get("style_enabled")
+
+    if style_on:
+        clean = _clean_pct(report.get("overall_clean_rate"))
+        summary = [
+            f"| Model | {metric} | clean | Cost |",
+            "| --- | --- | --- | --- |",
+            f"| `{report['model']}` | {overall_pct} | {clean} | {cost} |",
+        ]
+        per_task_head = [
+            f"| Task | {metric} | clean | passed/N | failed | timeout | error |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    else:
+        summary = [
+            f"| Model | {metric} | Cost |",
+            "| --- | --- | --- |",
+            f"| `{report['model']}` | {overall_pct} | {cost} |",
+        ]
+        per_task_head = [
+            f"| Task | {metric} | passed/N | failed | timeout | error |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
 
     lines = [
         f"### ruby-llm-eval results — `{report['model']}`",
@@ -93,25 +160,25 @@ def render_markdown(report: dict) -> str:
         f"Task set `v{report['task_set_version']}` · "
         f"N={report['n']} · k={report['k']} · temperature={report['temperature']}",
         "",
-        f"| Model | {metric} | Cost |",
-        "| --- | --- | --- |",
-        f"| `{report['model']}` | {overall_pct} | {cost} |",
+        *summary,
         "",
         "<details><summary>Per-task breakdown</summary>",
         "",
-        f"| Task | {metric} | passed/N | failed | timeout | error |",
-        "| --- | --- | --- | --- | --- | --- |",
+        *per_task_head,
     ]
     for task in report["tasks"]:
         counts = task["status_counts"]
-        lines.append(
-            f"| `{task['task_id']}` "
-            f"| {task['pass_at_k'] * 100:.0f}% "
-            f"| {task['passed']}/{task['n']} "
-            f"| {counts[STATUS_FAILED]} "
-            f"| {counts[STATUS_TIMEOUT]} "
-            f"| {counts[STATUS_ERROR]} |"
-        )
+        cells = [f"`{task['task_id']}`", f"{task['pass_at_k'] * 100:.0f}%"]
+        if style_on:
+            style = task.get("style") or {}
+            cells.append(_clean_pct(style.get("clean_rate")))
+        cells += [
+            f"{task['passed']}/{task['n']}",
+            str(counts[STATUS_FAILED]),
+            str(counts[STATUS_TIMEOUT]),
+            str(counts[STATUS_ERROR]),
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
     lines += ["", "</details>", ""]
     return "\n".join(lines)
 

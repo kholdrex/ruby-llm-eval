@@ -94,3 +94,9 @@ def load_providers(config_dir: Path) -> dict:
 def load_pricing(config_dir: Path) -> dict:
     """Return per-model token prices: {model: {input, output}} in USD / 1M."""
     return load_yaml(config_dir / "pricing.yaml").get("models", {})
+
+
+def load_rubocop_config(config_dir: Path) -> str | None:
+    """Return the RuboCop config text used by ``--style``, or None if absent."""
+    path = config_dir / "rubocop.yml"
+    return path.read_text(encoding="utf-8") if path.is_file() else None

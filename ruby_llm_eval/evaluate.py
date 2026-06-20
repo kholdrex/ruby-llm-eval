@@ -16,6 +16,7 @@ Each sample gets one of four statuses: ``passed``, ``failed``, ``timeout``,
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -98,6 +99,38 @@ def _classify(returncode: int, stdout: str, stderr: str, summary_re: re.Pattern)
     return STATUS_ERROR
 
 
+def _docker_cmd(container, image, work, *, timeout, memory, cpus, inner):
+    """Build the locked-down ``docker run`` command wrapping ``inner`` (argv)."""
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        container,
+        "--network",
+        "none",
+        "--memory",
+        memory,
+        "--cpus",
+        str(cpus),
+        "--pids-limit",
+        "128",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:size=64m",
+        "-e",
+        "HOME=/tmp",
+        "-v",
+        f"{work}:/work:ro",
+        "-w",
+        "/work",
+        image,
+        "timeout",
+        f"{timeout}s",
+        *inner,
+    ]
+
+
 def run_sample(
     task: Task,
     sample: Sample,
@@ -143,35 +176,15 @@ def run_sample(
         test.chmod(0o644)
 
         container = f"rle_{uuid.uuid4().hex[:12]}"
-        cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "--name",
+        cmd = _docker_cmd(
             container,
-            "--network",
-            "none",
-            "--memory",
-            memory,
-            "--cpus",
-            str(cpus),
-            "--pids-limit",
-            "128",
-            "--read-only",
-            "--tmpfs",
-            "/tmp:size=64m",
-            "-e",
-            "HOME=/tmp",
-            "-v",
-            f"{work}:/work:ro",
-            "-w",
-            "/work",
             image,
-            "timeout",
-            f"{timeout}s",
-            *framework["command"],
-            task.test_filename,
-        ]
+            work,
+            timeout=timeout,
+            memory=memory,
+            cpus=cpus,
+            inner=[*framework["command"], task.test_filename],
+        )
 
         try:
             proc = subprocess.run(
@@ -188,5 +201,62 @@ def run_sample(
         status = _classify(proc.returncode, proc.stdout, proc.stderr, framework["summary"])
         stderr = "" if status == STATUS_PASSED else (proc.stdout + proc.stderr).strip()
         return SampleResult(task.id, sample.index, status, stderr[:4000])
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def run_rubocop(
+    task: Task,
+    sample: Sample,
+    *,
+    rubocop_config: str,
+    image: str = IMAGE_TAG,
+    timeout: int = 10,
+    memory: str = "256m",
+    cpus: float = 1.0,
+    scratch_dir: Path | None = None,
+) -> int | None:
+    """Return a sample's RuboCop offense count, or None if it could not be linted.
+
+    Style is an axis independent of correctness; this only lints the candidate
+    inside the sandbox, it never executes it. RuboCop exits non-zero when it
+    finds offenses, so we ignore the exit code and parse the JSON summary.
+    """
+    if sample.error or not sample.code.strip():
+        return None
+
+    scratch_root = Path(scratch_dir) if scratch_dir else Path.cwd() / ".rle_sandbox"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix="rle_rc_", dir=str(scratch_root))).resolve()
+    try:
+        solution = work / "solution.rb"
+        config = work / ".rubocop.yml"
+        solution.write_text(sample.code, encoding="utf-8")
+        config.write_text(rubocop_config, encoding="utf-8")
+        work.chmod(0o755)
+        solution.chmod(0o644)
+        config.chmod(0o644)
+
+        container = f"rle_rc_{uuid.uuid4().hex[:12]}"
+        cmd = _docker_cmd(
+            container,
+            image,
+            work,
+            timeout=timeout,
+            memory=memory,
+            cpus=cpus,
+            inner=["rubocop", "--cache", "false", "--format", "json", "solution.rb"],
+        )
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 15)
+        except subprocess.TimeoutExpired:
+            subprocess.run(["docker", "kill", container], capture_output=True)
+            return None
+
+        try:
+            data = json.loads(proc.stdout)
+            return int(data["summary"]["offense_count"])
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return None
     finally:
         shutil.rmtree(work, ignore_errors=True)
