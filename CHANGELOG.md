@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add 5 harder tasks (string-to-integer with 32-bit clamp, bijective spreadsheet
+  columns, a precedence/parentheses calculator with truncating division,
+  integer-to-words, and full text justification). Task set bumped to v0.5.0
+  (27 tasks); these break the pass@1 ceiling — claude-sonnet-4-6 and gpt-4o
+  each fail at least one.
 - Verify TLS using certifi's CA bundle, fixing `CERTIFICATE_VERIFY_FAILED`
   errors when calling provider APIs from a Python without system certificates
   (common on macOS). Adds a `certifi` dependency.

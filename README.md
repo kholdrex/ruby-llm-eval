@@ -13,7 +13,7 @@ reports the fraction that pass. No GPU, no local model weights, no Bundler.
 
 ```text
 Model: claude-sonnet-4-6  (provider: anthropic)
-Tasks: 22 from tasks (v0.4.0)  N=5  k=1  temperature=0.2  timeout=10s
+Tasks: 27 from tasks (v0.5.0)  N=5  k=1  temperature=0.2  timeout=10s
 
   001_fizzbuzz                 pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
   002_palindrome               pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
@@ -168,22 +168,21 @@ Run `ruby-llm-eval run --help` for the full list.
 
 ## Sample results
 
-A real run on the bundled task set (v0.4.0), one sample per task (`-n 1`) at
-temperature 0.2, with `--style`. Reproduce with
+A real run on the bundled task set (v0.5.0, 27 tasks), one sample per task
+(`-n 1`) at temperature 0.2, with `--style`. Reproduce with
 `ruby-llm-eval run --provider <provider> --model <model> --style`.
 
 | Model | pass@1 | clean (idiomatic) | Cost |
 | --- | --- | --- | --- |
-| `claude-sonnet-4-6` | 100% | 59.1% | $0.05 |
-| `gpt-4o` | 100% | 81.8% | $0.03 |
+| `claude-sonnet-4-6` | 96.3% | 51.8% | $0.08 |
+| `gpt-4o` | 92.6% | 55.6% | $0.05 |
 
-Both flagship models solve every public seed task, so **pass@1 saturates** here —
-which is expected, and exactly why the contamination-resistant value lives in
-your own private and harder tasks (see below). The RuboCop **`clean`** column
-still separates them: gpt-4o's Ruby was idiomatic on 18/22 tasks versus 13/22
-for Sonnet. Run weaker models, raise `-n`/`-k`, or add tougher tasks to see
-pass@1 spread as well. The task-set version is recorded in every report so runs
-stay comparable.
+The two flagships fail on **different** tasks — Sonnet on the 32-bit `atoi`
+task, gpt-4o on the calculator and integer-to-words tasks — so even at `-n 1`
+the harder tasks separate them on correctness, while the RuboCop **`clean`**
+column adds an idiomatic-style axis. Bring your own private and harder tasks
+(see below) to sharpen the signal further. The task-set version is recorded in
+every report so runs stay comparable.
 
 ## Bring your own tasks
 
