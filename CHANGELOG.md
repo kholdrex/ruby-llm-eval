@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add regression coverage for selected malformed tasks missing `solution_ref.rb`, missing a test file, or shipping both `test.rb` and `spec.rb`.
 - Reject blank or whitespace-only selected task ids before discovery so CLI diagnostics do not collapse into unclear unknown-task errors.
 - Add 5 harder tasks (string-to-integer with 32-bit clamp, bijective spreadsheet
   columns, a precedence/parentheses calculator with truncating division,
