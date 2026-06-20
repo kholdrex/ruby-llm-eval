@@ -85,17 +85,24 @@ def load_task(task_dir: Path) -> Task:
 def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]:
     """Load every task in ``tasks_dir``, sorted by id for deterministic runs.
 
-    A directory is treated as a task if it contains a ``prompt.md``. The
-    optional ``only`` list filters to specific task ids (exact match).
+    By default, a directory is treated as a task if it contains a ``prompt.md``.
+    The optional ``only`` list filters to exact task ids and validates matching
+    directories even when they are malformed, so selected private tasks get
+    actionable file-level diagnostics.
     """
     if not tasks_dir.is_dir():
         raise FileNotFoundError(f"Tasks directory not found: {tasks_dir}")
 
+    selected = set(only) if only else None
+
     tasks: list[Task] = []
     for child in sorted(tasks_dir.iterdir()):
-        if not child.is_dir() or not (child / PROMPT_FILE).is_file():
+        if not child.is_dir():
             continue
-        if only and child.name not in only:
+        if selected:
+            if child.name not in selected:
+                continue
+        elif not (child / PROMPT_FILE).is_file():
             continue
         tasks.append(load_task(child))
 

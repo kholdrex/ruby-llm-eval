@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Improve selected custom-task diagnostics so malformed task directories requested by id report missing `prompt.md` directly instead of looking like unknown task ids.
+
 ## 0.2.0
 
 - Add `pass@k` for `k > 1` via the `-k` flag (unbiased HumanEval estimator);

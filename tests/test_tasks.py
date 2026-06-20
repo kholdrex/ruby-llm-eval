@@ -50,6 +50,17 @@ def test_unknown_task_id_raises():
         discover_tasks(TASKS_DIR, only=["999_nope"])
 
 
+def test_selected_malformed_task_reports_missing_prompt(tmp_path):
+    (tmp_path / "001_missing_prompt").mkdir()
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001_missing_prompt"])
+
+    message = str(exc_info.value)
+    assert "001_missing_prompt" in message
+    assert "missing prompt.md" in message
+
+
 def test_task_has_reference_and_test():
     task = load_task(TASKS_DIR / "001_fizzbuzz")
     assert "fizzbuzz" in task.prompt.lower()
