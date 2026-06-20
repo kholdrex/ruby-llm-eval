@@ -118,6 +118,19 @@ def test_build_report_overall_clean_rate_and_flag():
     assert report["overall_clean_rate"] == 0.75
 
 
+def test_categories_breakdown():
+    summaries = [
+        summarize_task("a", _results(["passed", "passed"]), n=2, category="rails"),
+        summarize_task("b", _results(["passed", "failed"]), n=2, category="rails"),
+        summarize_task("c", _results(["passed", "passed"]), n=2, category="general"),
+    ]
+    report = _report(summaries)
+    cats = report["categories"]
+    assert cats["rails"]["tasks"] == 2
+    assert cats["rails"]["pass_at_k"] == 0.75  # mean(1.0, 0.5)
+    assert cats["general"]["pass_at_k"] == 1.0
+
+
 def test_render_markdown_adds_clean_column_when_styled():
     summaries = [summarize_task("a", _results(["passed"]), n=1, style_offenses=[0])]
     md = render_markdown(_report(summaries, style_enabled=True))

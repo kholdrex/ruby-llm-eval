@@ -164,7 +164,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             results = [result for result, _ in pairs]
             offenses = [offense for _, offense in pairs] if args.style else None
-            summary = summarize_task(task.id, results, args.n, args.k, style_offenses=offenses)
+            summary = summarize_task(
+                task.id, results, args.n, args.k, style_offenses=offenses, category=task.category
+            )
             task_summaries.append(summary)
 
             glyphs = " ".join(_GLYPH.get(r.status, "?") for r in results)
@@ -204,6 +206,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.style and report["overall_clean_rate"] is not None:
         summary_line += f"   clean: {report['overall_clean_rate'] * 100:.1f}%"
     _eprint(summary_line)
+
+    categories = report["categories"]
+    if len(categories) > 1:
+        for name, data in categories.items():
+            line = f"  [{name}] {metric} {data['pass_at_k'] * 100:.1f}% ({data['tasks']} tasks)"
+            if args.style and data["clean_rate"] is not None:
+                line += f"   clean {data['clean_rate'] * 100:.1f}%"
+            _eprint(line)
+
     _eprint(f"Report: {json_path}")
     _eprint(f"Markdown: {md_path}\n")
     return 0

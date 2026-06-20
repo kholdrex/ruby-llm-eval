@@ -17,8 +17,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 PROMPT_FILE = "prompt.md"
 REFERENCE_FILE = "solution_ref.rb"
+# Optional per-task metadata (e.g. `category: rails`); absent => general.
+META_FILE = "meta.yml"
+DEFAULT_CATEGORY = "general"
 
 # Map each supported framework to the test filename that selects it.
 TEST_FILES = {"minitest": "test.rb", "rspec": "spec.rb"}
@@ -34,6 +39,7 @@ class Task:
     framework: str  # "minitest" or "rspec"
     test_filename: str  # "test.rb" or "spec.rb"
     test: str
+    category: str = DEFAULT_CATEGORY
 
     def reference(self) -> str:
         """Read the reference solution. Used to self-test tasks and the stub."""
@@ -48,6 +54,15 @@ def _read_required(task_dir: Path, filename: str) -> str:
             f"Task '{task_dir.name}' required file {filename} must be UTF-8 text "
             f"(invalid byte at offset {exc.start})."
         ) from None
+
+
+def _read_category(task_dir: Path) -> str:
+    """Read the optional task category from meta.yml (defaults to 'general')."""
+    meta_path = task_dir / META_FILE
+    if not meta_path.is_file():
+        return DEFAULT_CATEGORY
+    data = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+    return str(data.get("category", DEFAULT_CATEGORY)).strip() or DEFAULT_CATEGORY
 
 
 def _detect_framework(task_dir: Path) -> tuple[str, str]:
@@ -85,6 +100,7 @@ def load_task(task_dir: Path) -> Task:
         framework=framework,
         test_filename=test_filename,
         test=contents[test_filename],
+        category=_read_category(task_dir),
     )
 
 
