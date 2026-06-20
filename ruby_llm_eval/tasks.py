@@ -88,6 +88,17 @@ def load_task(task_dir: Path) -> Task:
     )
 
 
+def _invalid_selected_task_ids(task_ids: list[str]) -> list[str]:
+    invalid: list[str] = []
+    seen: set[str] = set()
+    for task_id in task_ids:
+        if task_id in {".", ".."} or "/" in task_id or "\\" in task_id:
+            if task_id not in seen:
+                invalid.append(task_id)
+                seen.add(task_id)
+    return invalid
+
+
 def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]:
     """Load every task in ``tasks_dir``, sorted by id for deterministic runs.
 
@@ -100,6 +111,13 @@ def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]
         raise FileNotFoundError(f"Tasks directory not found: {tasks_dir}")
 
     if only:
+        invalid = _invalid_selected_task_ids(only)
+        if invalid:
+            raise ValueError(
+                f"Invalid selected task id(s): {', '.join(invalid)}. "
+                "Task ids must be directory names, not paths."
+            )
+
         seen: set[str] = set()
         duplicates: list[str] = []
         duplicate_seen: set[str] = set()
