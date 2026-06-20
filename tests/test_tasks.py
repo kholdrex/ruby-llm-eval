@@ -61,6 +61,68 @@ def test_duplicate_selected_task_id_raises(tmp_path):
     assert "001_private" in message
 
 
+@pytest.mark.parametrize("task_id", ["nested/001_private", "nested\\001_private", ".", ".."])
+def test_path_like_selected_task_id_raises(tmp_path, task_id):
+    write_task(tmp_path, "001_private")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=[task_id])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert task_id in message
+    assert "Task ids must be directory names, not paths" in message
+
+
+def test_path_like_selected_task_ids_report_all_invalid_ids(tmp_path):
+    write_task(tmp_path, "001_private")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(
+            tmp_path, only=["001_private", "nested/002_private", "..", "nested\\003_private"]
+        )
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert "nested/002_private" in message
+    assert ".." in message
+    assert "nested\\003_private" in message
+    assert "001_private" not in message
+
+
+def test_path_like_selected_task_id_is_rejected_before_unknown_handling(tmp_path):
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["missing/001_private"])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert "missing/001_private" in message
+    assert "Unknown task id" not in message
+
+
+def test_parent_path_selected_task_id_is_rejected_before_interpreting_outside_path(tmp_path):
+    outside_task_id = f"{tmp_path.name}_outside"
+    write_task(tmp_path.parent, outside_task_id)
+    selected_id = f"../{outside_task_id}"
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=[selected_id])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert selected_id in message
+    assert "Unknown task id" not in message
+
+
+def test_path_like_selected_task_id_is_rejected_before_duplicate_handling(tmp_path):
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=[".", "."])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert "Duplicate task id" not in message
+
+
 def test_selected_task_file_reports_not_directory(tmp_path):
     (tmp_path / "001_private").write_text("not a task directory", encoding="utf-8")
 
