@@ -113,5 +113,12 @@ def test_detects_rspec_framework():
     assert "RSpec.describe" in task.test
 
 
+def test_activerecord_task_present():
+    task = load_task(TASKS_DIR / "017_ar_scopes")
+    assert task.framework == "minitest"
+    assert "ActiveRecord::Base" in task.reference()
+    assert "active_record" in task.test
+
+
 def test_version_is_recorded():
-    assert read_version(TASKS_DIR) == "0.2.0"
+    assert read_version(TASKS_DIR) == "0.3.0"
