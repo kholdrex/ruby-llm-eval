@@ -21,12 +21,20 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import urllib.error
 import urllib.request
 from typing import Any
 
+import certifi
+
 DEFAULT_MAX_TOKENS = 1024
 HTTP_TIMEOUT_SECONDS = 120
+
+# Verify TLS against certifi's CA bundle so HTTPS works even when the host
+# Python ships without system certificates installed (a common macOS gotcha
+# that otherwise fails with CERTIFICATE_VERIFY_FAILED).
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 class ModelError(RuntimeError):
@@ -38,7 +46,9 @@ def _post_json(url: str, headers: dict[str, str], payload: dict) -> dict:
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(
+            request, timeout=HTTP_TIMEOUT_SECONDS, context=_SSL_CONTEXT
+        ) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:  # 4xx / 5xx with a body
         body = exc.read().decode("utf-8", errors="replace")
