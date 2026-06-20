@@ -168,18 +168,22 @@ Run `ruby-llm-eval run --help` for the full list.
 
 ## Sample results
 
-> Illustrative numbers — run it yourself to get real ones for your model and
-> task set. Paste your own `run_<timestamp>.md` here.
+A real run on the bundled task set (v0.4.0), one sample per task (`-n 1`) at
+temperature 0.2, with `--style`. Reproduce with
+`ruby-llm-eval run --provider <provider> --model <model> --style`.
 
-| Model | pass@1 | Cost |
-| --- | --- | --- |
-| `claude-sonnet-4-6` | 92.0% | $0.16 |
-| `gpt-4o` | 88.0% | $0.12 |
-| `gpt-4o-mini` | 74.0% | $0.01 |
+| Model | pass@1 | clean (idiomatic) | Cost |
+| --- | --- | --- | --- |
+| `claude-sonnet-4-6` | 100% | 59.1% | $0.05 |
+| `gpt-4o` | 100% | 81.8% | $0.03 |
 
-Scores are pass@1 over N=5 samples per task at temperature 0.2 on task set
-v0.4.0. The task-set version is recorded in every report so runs stay
-comparable.
+Both flagship models solve every public seed task, so **pass@1 saturates** here —
+which is expected, and exactly why the contamination-resistant value lives in
+your own private and harder tasks (see below). The RuboCop **`clean`** column
+still separates them: gpt-4o's Ruby was idiomatic on 18/22 tasks versus 13/22
+for Sonnet. Run weaker models, raise `-n`/`-k`, or add tougher tasks to see
+pass@1 spread as well. The task-set version is recorded in every report so runs
+stay comparable.
 
 ## Bring your own tasks
 
