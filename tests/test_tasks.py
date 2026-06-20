@@ -360,6 +360,14 @@ def test_activerecord_task_present():
     assert "active_record" in task.test
 
 
+def test_rails_task_is_categorized():
+    assert load_task(TASKS_DIR / "017_ar_scopes").category == "rails"
+
+
+def test_category_defaults_to_general():
+    assert load_task(TASKS_DIR / "001_fizzbuzz").category == "general"
+
+
 def test_rails_migration_task_present():
     task = load_task(TASKS_DIR / "021_ar_migration")
     assert "ActiveRecord::Migration" in task.reference()

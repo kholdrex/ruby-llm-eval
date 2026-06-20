@@ -43,18 +43,42 @@ def summarize_task(
     n: int,
     k: int = 1,
     style_offenses: list[int | None] | None = None,
+    category: str = "general",
 ) -> dict:
     """Per-task pass@k, a breakdown of sample statuses, and optional style."""
     statuses = [r.status for r in results]
     passed = statuses.count(STATUS_PASSED)
     return {
         "task_id": task_id,
+        "category": category,
         "n": n,
         "passed": passed,
         "pass_at_k": pass_at_k(n, passed, k),
         "status_counts": {s: statuses.count(s) for s in STATUSES},
         "style": _summarize_style(style_offenses),
     }
+
+
+def _summarize_categories(task_summaries: list[dict]) -> dict:
+    """Aggregate per-task results into per-category pass@k and clean rates."""
+    groups: dict[str, list[dict]] = {}
+    for task in task_summaries:
+        groups.setdefault(task.get("category", "general"), []).append(task)
+
+    summary = {}
+    for category, items in sorted(groups.items()):
+        pass_rates = [t["pass_at_k"] for t in items]
+        clean_rates = [
+            t["style"]["clean_rate"]
+            for t in items
+            if t.get("style") and t["style"]["clean_rate"] is not None
+        ]
+        summary[category] = {
+            "tasks": len(items),
+            "pass_at_k": round(sum(pass_rates) / len(pass_rates), 4),
+            "clean_rate": round(sum(clean_rates) / len(clean_rates), 4) if clean_rates else None,
+        }
+    return summary
 
 
 def compute_cost(input_tokens: int, output_tokens: int, model: str, pricing: dict) -> dict:
@@ -106,6 +130,7 @@ def build_report(
         "overall_pass_at_k": round(overall, 4),
         "style_enabled": style_enabled,
         "overall_clean_rate": overall_clean,
+        "categories": _summarize_categories(task_summaries),
         "tasks": task_summaries,
         "cost": compute_cost(input_tokens, output_tokens, model, pricing),
     }
@@ -154,6 +179,28 @@ def render_markdown(report: dict) -> str:
             "| --- | --- | --- | --- | --- | --- |",
         ]
 
+    categories = report.get("categories", {})
+    category_block: list[str] = []
+    if len(categories) > 1:
+        category_block.append("**By category**")
+        category_block.append("")
+        if style_on:
+            category_block.append(f"| Category | tasks | {metric} | clean |")
+            category_block.append("| --- | --- | --- | --- |")
+            for name, data in categories.items():
+                category_block.append(
+                    f"| {name} | {data['tasks']} | {data['pass_at_k'] * 100:.0f}% "
+                    f"| {_clean_pct(data['clean_rate'])} |"
+                )
+        else:
+            category_block.append(f"| Category | tasks | {metric} |")
+            category_block.append("| --- | --- | --- |")
+            for name, data in categories.items():
+                category_block.append(
+                    f"| {name} | {data['tasks']} | {data['pass_at_k'] * 100:.0f}% |"
+                )
+        category_block.append("")
+
     lines = [
         f"### ruby-llm-eval results — `{report['model']}`",
         "",
@@ -162,6 +209,7 @@ def render_markdown(report: dict) -> str:
         "",
         *summary,
         "",
+        *category_block,
         "<details><summary>Per-task breakdown</summary>",
         "",
         *per_task_head,
