@@ -13,7 +13,7 @@ reports the fraction that pass. No GPU, no local model weights, no Bundler.
 
 ```text
 Model: claude-sonnet-4-6  (provider: anthropic)
-Tasks: 27 from tasks (v0.5.0)  N=5  k=1  temperature=0.2  timeout=10s
+Tasks: 35 from tasks (v0.6.0)  N=5  k=1  temperature=0.2  timeout=10s
 
   001_fizzbuzz                 pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
   002_palindrome               pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
@@ -168,23 +168,28 @@ Run `ruby-llm-eval run --help` for the full list.
 
 ## Sample results
 
-A real run on the bundled task set (v0.5.0, 27 tasks), one sample per task
-(`-n 1`) at temperature 0.2, with `--style`. Reproduce with
-`ruby-llm-eval run --provider <provider> --model <model> --style`.
+A real run on the bundled task set (v0.6.0, 35 tasks — 14 Rails, 21 general),
+`n=3` per task at temperature 0.2, with `--style`. Reproduce with
+`ruby-llm-eval run --provider <provider> --model <model> -n 3 --style`.
 
-| Model | pass@1 | clean (idiomatic) | Cost |
-| --- | --- | --- | --- |
-| `gpt-4o-mini` | 96.3% | 66.7% | $0.003 |
-| `claude-haiku-4-5` | 96.3% | 37.0% | $0.03 |
-| `gpt-4o` | 92.6% | 55.6% | $0.05 |
-| `claude-sonnet-4-6` | 96.3% | 51.8% | $0.08 |
+| Model | tier | Rails pass@1 | Rails clean | General pass@1 | Overall | $/run |
+| --- | --- | --- | --- | --- | --- | --- |
+| `gpt-4o-mini` | cheap | 100% | 83% | 87% | 92% | $0.01 |
+| `claude-haiku-4-5` | cheap | 100% | 83% | 95% | 97% | $0.12 |
+| `gpt-4o` | mid | 100% | 86% | 90% | 94% | $0.19 |
+| `claude-sonnet-4-6` | mid | 100% | 93% | 95% | 97% | $0.29 |
+| `claude-opus-4-8` | top | 100% | 93% | 100% | 100% | $1.80 |
 
-Reading it: the harder tasks (023–027) separate the models — each fails one or
-two — and here the cheapest model, `gpt-4o-mini`, is no worse on correctness and
-the most idiomatic, at roughly 25× lower cost than Sonnet. That price/quality
-call is exactly what the tool is meant to inform. Note `-n 1` is noisy (a single
-sample decides each task) — raise `-n`/`-k` for a stable ranking. The task-set
-version is recorded in every report so runs stay comparable.
+**Reading it for Rails:** every model — even `gpt-4o-mini` at ~$0.01/run —
+solves all 14 Rails tasks (associations, enums, strong params, callbacks,
+migrations, controllers). For everyday Rails the cheapest model is
+correctness-complete; paying more buys slightly more idiomatic style
+(`clean` 83% → 93%) and better results on the harder *general* algorithm tasks
+(87% → 100%), not Rails correctness. To genuinely *rank* models on Rails you'd
+want harder Rails tasks (a great contribution) — or drop in your own private
+ones. The `--style` axis and the per-category breakdown come from running with
+`--style`; the task-set version is recorded in every report so runs stay
+comparable.
 
 ## Bring your own tasks
 
