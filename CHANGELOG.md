@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject duplicate selected task ids before discovering task suites for runs or listings.
 - Add installed-wheel coverage verifying bundled configs, sandbox assets, and task files are discoverable outside a source checkout.
 - Add Rails-aware tasks: ActiveRecord scopes, validations, and associations run
   against in-memory SQLite in the sandbox (`activerecord` + `sqlite3` are
