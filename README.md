@@ -69,14 +69,59 @@ Windows, Docker Desktop is the easiest option.
 git clone https://github.com/kholdrex/ruby-llm-eval.git
 cd ruby-llm-eval
 pip install -e .
+```
 
-# 2. Add your API key
+### Start with a private task, safely
+
+For the cleanest signal, keep your evaluation tasks outside this public repo —
+usually in a private repo next to it — and point `ruby-llm-eval` at that
+directory.
+
+```bash
+# Create a private task directory outside this checkout.
+# Use your own task slug; this example uses 001_invoice_total.
+mkdir -p ../ruby_eval_private_tasks
+cp -R tasks/001_fizzbuzz ../ruby_eval_private_tasks/001_invoice_total
+
+# Edit all three files so they describe your real Ruby task:
+#   ../ruby_eval_private_tasks/001_invoice_total/prompt.md
+#   ../ruby_eval_private_tasks/001_invoice_total/test.rb
+#   ../ruby_eval_private_tasks/001_invoice_total/solution_ref.rb
+```
+
+Validate discovery before you spend a cent:
+
+```bash
+ruby-llm-eval list-tasks --tasks ../ruby_eval_private_tasks
+ruby-llm-eval list-tasks --tasks ../ruby_eval_private_tasks --task 001_invoice_total
+```
+
+Then run the selected private task with the built-in `stub` provider. It returns
+that task's `solution_ref.rb`, so it exercises the full generate → evaluate →
+report pipeline offline — no API key, no provider spend:
+
+```bash
+ruby-llm-eval run \
+  --provider stub --model stub \
+  --tasks ../ruby_eval_private_tasks \
+  --task 001_invoice_total \
+  -n 1
+```
+
+When the stub run is green, add your API key and switch to a real provider. The
+first paid run below keeps `-n 1` so you can confirm the path before spending on
+a larger sample:
+
+```bash
 cp .env.example .env
 $EDITOR .env                 # set ANTHROPIC_API_KEY (or OPENAI_API_KEY, ...)
 set -a; source .env; set +a  # export the vars into your shell
 
-# 3. Run (the sandbox image builds automatically on first run)
-ruby-llm-eval run --provider anthropic --model claude-sonnet-4-6
+ruby-llm-eval run \
+  --provider anthropic --model claude-sonnet-4-6 \
+  --tasks ../ruby_eval_private_tasks \
+  --task 001_invoice_total \
+  -n 1
 ```
 
 You'll get a live per-task readout, plus two files in `results/`:
@@ -84,10 +129,10 @@ You'll get a live per-task readout, plus two files in `results/`:
 - `run_<timestamp>.json` — full machine-readable report (reproducible).
 - `run_<timestamp>.md` — a markdown table you can paste into an issue or README.
 
-### Try it with no API key
+### Try the bundled tasks with no API key
 
-The built-in `stub` provider returns each task's reference solution, so you can
-watch the whole generate → evaluate → report pipeline run offline:
+The same `stub` provider works against the bundled task set if you just want to
+watch the pipeline run offline:
 
 ```bash
 ruby-llm-eval run --provider stub --model stub
@@ -112,6 +157,7 @@ List what's available (and each task's test framework) without running anything:
 
 ```bash
 ruby-llm-eval list-tasks
+ruby-llm-eval list-tasks --tasks ../ruby_eval_private_tasks --task 001_invoice_total
 ```
 
 To estimate **pass@k for k > 1**, sample more completions and raise `-k`, e.g.
@@ -150,16 +196,29 @@ my_private_tasks/
 Prefer RSpec? Drop a `spec.rb` (instead of `test.rb`) and it's auto-detected —
 see `tasks/016_stack` for a worked example.
 
-Point the tool at any directory:
+Point the tool at any directory. A good workflow is: list the tasks, run the
+stub provider against one selected task, then switch to the real provider once
+the harness is green:
 
 ```bash
+ruby-llm-eval list-tasks --tasks ../my_private_tasks
+
+ruby-llm-eval run --provider stub --model stub \
+  --tasks ../my_private_tasks \
+  --task 001_invoice_total \
+  -n 1
+
 ruby-llm-eval run --provider anthropic --model claude-sonnet-4-6 \
-  --tasks ./my_private_tasks
+  --tasks ../my_private_tasks \
+  --task 001_invoice_total \
+  -n 1
 ```
 
-Because your tasks live outside this repo (ideally in a private one), they
-can't leak into a model's training data — so the score reflects genuine ability,
-not memorization. The full copy-paste walkthrough for authoring a task is in
+Keeping tasks outside this repo (ideally in a private one) reduces public
+exposure and keeps them out of this project's published task corpus. Real
+provider runs still send `prompt.md` content to the selected API provider; the
+reference solution and tests remain local and are not included in the model
+prompt. The full copy-paste walkthrough for authoring a task is in
 [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-task).
 
 ## Add a provider
