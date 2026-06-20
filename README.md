@@ -13,7 +13,7 @@ reports the fraction that pass. No GPU, no local model weights, no Bundler.
 
 ```text
 Model: claude-sonnet-4-6  (provider: anthropic)
-Tasks: 19 from tasks (v0.3.0)  N=5  k=1  temperature=0.2  timeout=10s
+Tasks: 22 from tasks (v0.4.0)  N=5  k=1  temperature=0.2  timeout=10s
 
   001_fizzbuzz                 pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
   002_palindrome               pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
@@ -178,7 +178,7 @@ Run `ruby-llm-eval run --help` for the full list.
 | `gpt-4o-mini` | 74.0% | $0.01 |
 
 Scores are pass@1 over N=5 samples per task at temperature 0.2 on task set
-v0.3.0. The task-set version is recorded in every report so runs stay
+v0.4.0. The task-set version is recorded in every report so runs stay
 comparable.
 
 ## Bring your own tasks
@@ -282,13 +282,14 @@ Shipped:
 - ✅ **pass@k for k > 1** — via the `-k` flag (unbiased HumanEval estimator).
 - ✅ **RuboCop idiomatic-style scoring** — via `--style` (a `clean` column).
 - ✅ **Parallel evaluation** — via `--jobs`.
-- ✅ **Rails-aware tasks** — ActiveRecord tasks (scopes, validations,
-  associations) run against in-memory SQLite in the sandbox.
+- ✅ **Rails-aware tasks** — ActiveRecord (scopes, validations, associations,
+  callbacks), a migration, and a JSON controller (rack-test request specs), all
+  run in the sandbox against in-memory SQLite.
 
 Planned:
 
-- **More Rails coverage** — callbacks, controller/request specs, migrations.
 - **A shared, versioned public task set** with a community leaderboard.
+- **More providers and seed tasks** — contributions welcome.
 
 Contributions toward any of these are very welcome.
 

@@ -1,8 +1,9 @@
 # Sandbox image for running untrusted, model-generated Ruby code.
 # Nothing is baked in: the candidate solution + test are mounted read-only at
-# /work at run time. Minitest ships with Ruby (no Bundler needed); RSpec and
-# ActiveRecord do not, so we install them for tasks that need them (a spec.rb
-# suite, or Rails-aware tasks that use ActiveRecord with in-memory SQLite).
+# /work at run time. Minitest ships with Ruby (no Bundler needed); RSpec and the
+# Rails pieces do not, so we install them for tasks that need them: a spec.rb
+# suite, or Rails-aware tasks using ActiveRecord (in-memory SQLite), migrations,
+# or controllers (ActionPack + rack-test).
 FROM ruby:3.3-slim
 
 # Build tools are needed to compile native gem extensions (e.g. prism, a RuboCop
@@ -15,6 +16,8 @@ RUN apt-get update \
  && gem install rubocop -v "~> 1.69" --no-document \
  && gem install activerecord -v "~> 7.2" --no-document \
  && gem install sqlite3 -v "~> 2.0" --no-document \
+ && gem install actionpack -v "~> 7.2" --no-document \
+ && gem install rack-test -v "~> 2.1" --no-document \
  && apt-get purge -y --auto-remove build-essential \
  && rm -rf /var/lib/apt/lists/*
 

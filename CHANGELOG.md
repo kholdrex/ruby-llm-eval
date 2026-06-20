@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Expand Rails coverage: add ActiveRecord callbacks (020), a migration (021),
+  and a JSON controller driven by rack-test (022). The sandbox now also installs
+  `actionpack` + `rack-test`. Task set bumped to v0.4.0 (22 tasks).
 - Report selected task ids that point at files as task/file-specific validation errors instead of generic unknown ids.
 - Reject duplicate selected task ids before discovering task suites for runs or listings.
 - Add installed-wheel coverage verifying bundled configs, sandbox assets, and task files are discoverable outside a source checkout.
