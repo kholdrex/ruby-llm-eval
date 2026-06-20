@@ -188,5 +188,17 @@ def test_activerecord_task_present():
     assert "active_record" in task.test
 
 
+def test_rails_migration_task_present():
+    task = load_task(TASKS_DIR / "021_ar_migration")
+    assert "ActiveRecord::Migration" in task.reference()
+    assert "migrate(:up)" in task.test
+
+
+def test_rails_controller_task_present():
+    task = load_task(TASKS_DIR / "022_rails_controller")
+    assert "ActionController::Base" in task.reference()
+    assert "rack/test" in task.test
+
+
 def test_version_is_recorded():
-    assert read_version(TASKS_DIR) == "0.3.0"
+    assert read_version(TASKS_DIR) == "0.4.0"

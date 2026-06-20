@@ -192,6 +192,12 @@ require_relative "solution"
 # ... Minitest assertions against the model defined in solution.rb
 ```
 
+`actionpack` and `rack-test` are preinstalled too, so tasks can cover
+**migrations** (run the candidate's migration with `CreateThing.new.migrate(:up)`
+then assert the schema — see `tasks/021_ar_migration`) and **controllers**
+(route a `RouteSet` to the candidate's controller and drive it with `Rack::Test`
+— see `tasks/022_rails_controller`).
+
 ### Using private / external tasks
 
 You don't have to add tasks to this repo at all. Keep them anywhere (ideally a
