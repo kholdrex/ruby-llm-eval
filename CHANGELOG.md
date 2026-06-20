@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Verify TLS using certifi's CA bundle, fixing `CERTIFICATE_VERIFY_FAILED`
+  errors when calling provider APIs from a Python without system certificates
+  (common on macOS). Adds a `certifi` dependency.
 - Reject path-like selected task ids before task discovery with clearer directory-name diagnostics.
 - Clean up evaluation sandbox scratch directories even when a task run fails before report generation.
 - Expand Rails coverage: add ActiveRecord callbacks (020), a migration (021),
