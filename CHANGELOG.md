@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add Rails-aware tasks: ActiveRecord scopes, validations, and associations run
+  against in-memory SQLite in the sandbox (`activerecord` + `sqlite3` are
+  preinstalled). Task set bumped to v0.3.0 (19 tasks).
 - Add CI coverage for selecting a private task with the stub provider.
 - Improve selected custom-task diagnostics so malformed task directories requested by id report missing `prompt.md` directly instead of looking like unknown task ids.
 

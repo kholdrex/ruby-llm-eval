@@ -171,6 +171,27 @@ end
 
 RSpec is preinstalled in the sandbox image, so no Bundler or Gemfile is needed.
 
+### Rails-aware (ActiveRecord) tasks
+
+`activerecord` and `sqlite3` are preinstalled in the sandbox, so a task can
+exercise Rails-flavoured Ruby. Keep it deterministic and self-contained: the
+`test.rb` connects to an **in-memory** database, defines the schema, then
+`require_relative "solution"`. See `tasks/017_ar_scopes` for the pattern:
+
+```ruby
+require "minitest/autorun"
+require "active_record"
+
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Schema.verbose = false
+ActiveRecord::Schema.define do
+  create_table(:articles) { |t| t.string(:title); t.boolean(:published) }
+end
+
+require_relative "solution"
+# ... Minitest assertions against the model defined in solution.rb
+```
+
 ### Using private / external tasks
 
 You don't have to add tasks to this repo at all. Keep them anywhere (ideally a
