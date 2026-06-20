@@ -100,7 +100,13 @@ def _invalid_selected_task_ids(task_ids: list[str]) -> list[str]:
     invalid: list[str] = []
     seen: set[str] = set()
     for task_id in task_ids:
-        if not task_id.strip() or task_id in {".", ".."} or "/" in task_id or "\\" in task_id:
+        if (
+            not task_id.strip()
+            or task_id != task_id.strip()
+            or task_id in {".", ".."}
+            or "/" in task_id
+            or "\\" in task_id
+        ):
             label = _format_invalid_selected_task_id(task_id)
             if label not in seen:
                 invalid.append(label)
@@ -124,7 +130,8 @@ def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]
         if invalid:
             raise ValueError(
                 f"Invalid selected task id(s): {', '.join(invalid)}. "
-                "Task ids must be non-empty directory names, not paths."
+                "Task ids must be non-empty directory names, not paths, and must not "
+                "have leading or trailing whitespace."
             )
 
         seen: set[str] = set()
