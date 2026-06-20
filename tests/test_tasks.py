@@ -61,6 +61,31 @@ def test_duplicate_selected_task_id_raises(tmp_path):
     assert "001_private" in message
 
 
+def test_selected_task_file_reports_not_directory(tmp_path):
+    (tmp_path / "001_private").write_text("not a task directory", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001_private"])
+
+    message = str(exc_info.value)
+    assert "Selected task id(s) are not directories" in message
+    assert "001_private" in message
+
+
+def test_selected_task_files_report_all_not_directories(tmp_path):
+    write_task(tmp_path, "001_valid")
+    (tmp_path / "002_file").write_text("not a task directory", encoding="utf-8")
+    (tmp_path / "003_file").write_text("not a task directory", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001_valid", "002_file", "003_file"])
+
+    message = str(exc_info.value)
+    assert "Selected task id(s) are not directories" in message
+    assert "002_file" in message
+    assert "003_file" in message
+
+
 def test_selected_malformed_task_reports_missing_prompt(tmp_path):
     (tmp_path / "001_missing_prompt").mkdir()
 

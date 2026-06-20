@@ -112,16 +112,27 @@ def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]
             raise ValueError(f"Duplicate task id(s): {', '.join(duplicates)}")
 
     selected = set(only) if only else None
+    if selected:
+        non_directories = sorted(
+            name
+            for name in selected
+            if (tasks_dir / name).exists() and not (tasks_dir / name).is_dir()
+        )
+        if non_directories:
+            raise ValueError(
+                f"Selected task id(s) are not directories: {', '.join(non_directories)}"
+            )
 
     tasks: list[Task] = []
     for child in sorted(tasks_dir.iterdir()):
-        if not child.is_dir():
-            continue
         if selected:
             if child.name not in selected:
                 continue
-        elif not (child / PROMPT_FILE).is_file():
-            continue
+        else:
+            if not child.is_dir():
+                continue
+            if not (child / PROMPT_FILE).is_file():
+                continue
         tasks.append(load_task(child))
 
     if only:
