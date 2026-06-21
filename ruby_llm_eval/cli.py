@@ -112,6 +112,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     tasks = discover_tasks(tasks_dir, only=args.task or None)
     task_set_version = read_version(tasks_dir)
 
+    if args.offline_stub and args.style:
+        _eprint(
+            "Error: --offline-stub cannot be combined with --style; style scoring requires Docker."
+        )
+        return 2
+    if args.offline_stub and (args.provider != "stub" or args.model != "stub"):
+        _eprint("Error: --offline-stub requires --provider stub --model stub.")
+        return 2
+
     client = build_client(
         args.provider,
         args.model,
@@ -119,12 +128,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         base_url=args.base_url,
         api_key=args.api_key,
     )
-    if args.offline_stub and args.style:
-        _eprint(
-            "Error: --offline-stub cannot be combined with --style; style scoring requires Docker."
-        )
-        return 2
-    if args.offline_stub and not (isinstance(client, StubClient) and args.model == "stub"):
+    if args.offline_stub and not isinstance(client, StubClient):
         _eprint("Error: --offline-stub requires --provider stub --model stub.")
         return 2
     offline_stub = args.offline_stub
