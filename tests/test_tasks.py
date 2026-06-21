@@ -442,6 +442,33 @@ def test_load_task_rejects_non_string_meta_category(tmp_path, meta):
     assert "field 'category' must be a string" in message
 
 
+@pytest.mark.parametrize(
+    "meta",
+    [
+        "category: 'rails|security'\n",
+        'category: "rails\\nsecurity"\n',
+        'category: "rails\\rsecurity"\n',
+        'category: "rails\\tsecurity"\n',
+        'category: "rails\\x7fsecurity"\n',
+        'category: "rails\\Nsecurity"\n',
+        'category: "rails\\Lsecurity"\n',
+        'category: "rails\\Psecurity"\n',
+    ],
+)
+def test_load_task_rejects_unsafe_report_category_labels(tmp_path, meta):
+    task_dir = write_task(tmp_path, "001_bad_category_label")
+    (task_dir / "meta.yml").write_text(meta, encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_bad_category_label" in message
+    assert "meta.yml" in message
+    assert "field 'category'" in message
+    assert "single-line report label" in message
+
+
 def test_rails_migration_task_present():
     task = load_task(TASKS_DIR / "021_ar_migration")
     assert "ActiveRecord::Migration" in task.reference()

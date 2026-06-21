@@ -14,6 +14,7 @@ registry to edit.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -94,7 +95,19 @@ def _read_category(task_dir: Path) -> str:
             f"Task '{task_dir.name}' optional file {META_FILE} field 'category' "
             f"must be a string, got {type(category).__name__}."
         )
-    return category.strip() or DEFAULT_CATEGORY
+    category = category.strip()
+    if not category:
+        return DEFAULT_CATEGORY
+    if (
+        "|" in category
+        or category.splitlines() != [category]
+        or any(unicodedata.category(char).startswith("C") for char in category)
+    ):
+        raise ValueError(
+            f"Task '{task_dir.name}' optional file {META_FILE} field 'category' "
+            "must be a single-line report label without control characters or '|'."
+        )
+    return category
 
 
 def _detect_framework(task_dir: Path) -> tuple[str, str]:
