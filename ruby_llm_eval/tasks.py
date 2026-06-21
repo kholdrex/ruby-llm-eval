@@ -86,7 +86,15 @@ def _read_category(task_dir: Path) -> str:
         ) from None
     else:
         data = loaded
-    return str(data.get("category", DEFAULT_CATEGORY)).strip() or DEFAULT_CATEGORY
+    category = data.get("category", DEFAULT_CATEGORY)
+    if category is None:
+        return DEFAULT_CATEGORY
+    if not isinstance(category, str):
+        raise ValueError(
+            f"Task '{task_dir.name}' optional file {META_FILE} field 'category' "
+            f"must be a string, got {type(category).__name__}."
+        )
+    return category.strip() or DEFAULT_CATEGORY
 
 
 def _detect_framework(task_dir: Path) -> tuple[str, str]:

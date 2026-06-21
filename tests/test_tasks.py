@@ -411,12 +411,35 @@ def test_load_task_rejects_malformed_meta_yml(tmp_path):
     assert exc_info.value.__cause__ is None
 
 
-@pytest.mark.parametrize("meta", ["", "category: ''\n", "category: '   '\n"])
+@pytest.mark.parametrize("meta", ["", "category: ''\n", "category: '   '\n", "category:\n"])
 def test_meta_yml_empty_or_blank_category_defaults_to_general(tmp_path, meta):
     task_dir = write_task(tmp_path, "001_default_category")
     (task_dir / "meta.yml").write_text(meta, encoding="utf-8")
 
     assert load_task(task_dir).category == "general"
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        "category:\n  - rails\n",
+        "category:\n  name: rails\n",
+        "category: 123\n",
+        "category: 1.5\n",
+        "category: true\n",
+    ],
+)
+def test_load_task_rejects_non_string_meta_category(tmp_path, meta):
+    task_dir = write_task(tmp_path, "001_bad_category")
+    (task_dir / "meta.yml").write_text(meta, encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_bad_category" in message
+    assert "meta.yml" in message
+    assert "field 'category' must be a string" in message
 
 
 def test_rails_migration_task_present():
