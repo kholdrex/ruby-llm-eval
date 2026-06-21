@@ -29,7 +29,7 @@ from .evaluate import (
     run_sample,
 )
 from .generate import generate_for_task, safe_model_dir
-from .model_client import StubClient, build_client
+from .model_client import build_client
 from .report import build_report, summarize_task, write_reports
 from .tasks import discover_tasks, read_version
 
@@ -133,9 +133,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         base_url=args.base_url,
         api_key=args.api_key,
     )
-    if args.offline_stub and not isinstance(client, StubClient):
-        _eprint("Error: --offline-stub requires --provider stub --model stub.")
-        return 2
     offline_stub = args.offline_stub
 
     if not offline_stub and not docker_available():
