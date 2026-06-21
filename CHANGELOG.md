@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject unsafe optional task `meta.yml` category labels that could break Markdown report tables.
 - Treat blank task-set `VERSION` files as `unknown` and report invalid UTF-8 with task-set-specific diagnostics.
 - Reject non-string optional task `meta.yml` category values with task/file-specific diagnostics, and treat explicit null categories as the default `general` category.
 - Improve optional task `meta.yml` validation diagnostics for malformed private/BYO task files.
