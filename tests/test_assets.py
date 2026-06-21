@@ -1,6 +1,8 @@
 import filecmp
 from pathlib import Path
 
+import pytest
+
 from ruby_llm_eval.config import find_tasks_dir
 from ruby_llm_eval.tasks import discover_tasks, read_version
 
@@ -57,6 +59,27 @@ def test_default_tasks_dir_ignores_empty_local_tasks_dir(tmp_path, monkeypatch):
 
     assert tasks_dir != empty_tasks
     assert tasks[0].id == "001_fizzbuzz"
+
+
+def test_read_version_blank_version_file_defaults_to_unknown(tmp_path):
+    (tmp_path / "VERSION").write_text("\n\t  \n", encoding="utf-8")
+
+    assert read_version(tmp_path) == "unknown"
+
+
+def test_read_version_rejects_invalid_utf8_with_task_set_context(tmp_path):
+    version_file = tmp_path / "VERSION"
+    version_file.write_bytes(b"0.1\xff\n")
+
+    with pytest.raises(ValueError) as exc_info:
+        read_version(tmp_path)
+
+    message = str(exc_info.value)
+    assert str(version_file) in message
+    assert "VERSION" in message
+    assert "must be UTF-8 text" in message
+    assert "offset" in message
+    assert exc_info.value.__cause__ is None
 
 
 def test_bundled_assets_match_source_assets():
