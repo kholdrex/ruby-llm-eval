@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Improve optional task `meta.yml` validation diagnostics for malformed private/BYO task files.
 - Add explicit `--offline-stub` mode for provider-free, no-Docker private task selection smoke checks; reports are marked as non-sandboxed offline stub output.
 - Retry provider requests without `temperature` when a model rejects it (e.g.
   Claude Opus 4.8 and reasoning models return 400), instead of failing the run.
