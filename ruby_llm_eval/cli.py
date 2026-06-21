@@ -18,7 +18,16 @@ from .config import (
     load_providers,
     load_rubocop_config,
 )
-from .evaluate import IMAGE_TAG, docker_available, ensure_image, run_rubocop, run_sample
+from .evaluate import (
+    IMAGE_TAG,
+    STATUS_ERROR,
+    STATUS_PASSED,
+    SampleResult,
+    docker_available,
+    ensure_image,
+    run_rubocop,
+    run_sample,
+)
 from .generate import generate_for_task, safe_model_dir
 from .model_client import build_client
 from .report import build_report, summarize_task, write_reports
@@ -76,10 +85,34 @@ def _evaluate_samples(task, samples, *, timeout, memory, cpus, scratch_dir, jobs
         return list(pool.map(run_one, samples))
 
 
+def _evaluate_stub_samples(task, samples):
+    """Return deterministic no-Docker results for the offline stub provider."""
+    pairs = []
+    for sample in samples:
+        status = STATUS_ERROR if sample.error else STATUS_PASSED
+        stderr = sample.error or ""
+        pairs.append((SampleResult(task.id, sample.index, status, stderr), None))
+    return pairs
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    config_dir = find_config_dir(args.config_dir)
-    providers = load_providers(config_dir)
-    pricing = load_pricing(config_dir)
+    if args.offline_stub and args.style:
+        _eprint(
+            "Error: --offline-stub cannot be combined with --style; style scoring requires Docker."
+        )
+        return 2
+    if args.offline_stub and (args.provider != "stub" or args.model != "stub"):
+        _eprint("Error: --offline-stub requires --provider stub --model stub.")
+        return 2
+
+    if args.offline_stub:
+        config_dir = None
+        providers = {"stub": {"type": "stub"}}
+        pricing = {"stub": {"input": 0.0, "output": 0.0}}
+    else:
+        config_dir = find_config_dir(args.config_dir)
+        providers = load_providers(config_dir)
+        pricing = load_pricing(config_dir)
 
     if args.n < 1:
         _eprint(f"Error: -n/--samples must be >= 1 (got {args.n}).")
@@ -93,7 +126,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     tasks = discover_tasks(tasks_dir, only=args.task or None)
     task_set_version = read_version(tasks_dir)
 
-    if not docker_available():
+    client = build_client(
+        args.provider,
+        args.model,
+        providers,
+        base_url=args.base_url,
+        api_key=args.api_key,
+    )
+    offline_stub = args.offline_stub
+
+    if not offline_stub and not docker_available():
         _eprint(
             "Error: Docker is required to run evaluations safely but was not "
             "found on PATH. Install Docker Desktop or the Docker Engine and "
@@ -108,16 +150,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             _eprint("Error: --style needs configs/rubocop.yml but it was not found.")
             return 2
 
-    _eprint(f"Building/locating sandbox image {IMAGE_TAG} ...")
-    ensure_image(find_sandbox_dir(args.sandbox))
-
-    client = build_client(
-        args.provider,
-        args.model,
-        providers,
-        base_url=args.base_url,
-        api_key=args.api_key,
-    )
+    if offline_stub:
+        _eprint(
+            "Offline stub provider: skipping Docker sandbox; "
+            "stub reference samples are marked passed."
+        )
+    else:
+        _eprint(f"Building/locating sandbox image {IMAGE_TAG} ...")
+        ensure_image(find_sandbox_dir(args.sandbox))
 
     out_root = Path(args.output)
     samples_dir = out_root / safe_model_dir(args.model)
@@ -152,16 +192,19 @@ def cmd_run(args: argparse.Namespace) -> int:
             total_input += sum(s.input_tokens for s in samples)
             total_output += sum(s.output_tokens for s in samples)
 
-            pairs = _evaluate_samples(
-                task,
-                samples,
-                timeout=args.timeout,
-                memory=args.memory,
-                cpus=args.cpus,
-                scratch_dir=scratch_dir,
-                jobs=jobs,
-                rubocop_config=rubocop_config,
-            )
+            if offline_stub:
+                pairs = _evaluate_stub_samples(task, samples)
+            else:
+                pairs = _evaluate_samples(
+                    task,
+                    samples,
+                    timeout=args.timeout,
+                    memory=args.memory,
+                    cpus=args.cpus,
+                    scratch_dir=scratch_dir,
+                    jobs=jobs,
+                    rubocop_config=rubocop_config,
+                )
             results = [result for result, _ in pairs]
             offenses = [offense for _, offense in pairs] if args.style else None
             summary = summarize_task(
@@ -191,6 +234,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             pricing=pricing,
             timestamp=timestamp,
             style_enabled=args.style,
+            evaluation_mode="offline_stub" if offline_stub else "sandbox",
+            sandboxed=not offline_stub,
         )
         json_path, md_path = write_reports(report, out_root, timestamp)
     finally:
@@ -243,7 +288,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--provider",
         default="stub",
-        help="Provider from configs/providers.yaml (default: stub, runs offline).",
+        help=(
+            "Provider from configs/providers.yaml (default: stub; evaluation still "
+            "uses Docker unless --offline-stub is set)."
+        ),
     )
     run.add_argument(
         "--tasks",
@@ -290,6 +338,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--style",
         action="store_true",
         help="Also score idiomatic style with RuboCop (needs configs/rubocop.yml).",
+    )
+    run.add_argument(
+        "--offline-stub",
+        action="store_true",
+        help=(
+            "Explicitly bypass Docker only for --provider stub --model stub. "
+            "Reports are marked evaluation_mode=offline_stub and sandboxed=false."
+        ),
     )
     run.add_argument("--output", default="results", help="Output directory (default: ./results).")
     run.add_argument("--base-url", help="Override the provider base URL.")
