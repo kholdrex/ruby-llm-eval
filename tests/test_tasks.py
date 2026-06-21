@@ -368,6 +368,57 @@ def test_category_defaults_to_general():
     assert load_task(TASKS_DIR / "001_fizzbuzz").category == "general"
 
 
+def test_load_task_rejects_meta_yml_with_invalid_utf8(tmp_path):
+    task_dir = write_task(tmp_path, "001_bad_meta_encoding")
+    (task_dir / "meta.yml").write_bytes(b"category: general\xff\xfe\n")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_bad_meta_encoding" in message
+    assert "meta.yml" in message
+    assert "must be UTF-8 text" in message
+    assert "offset" in message
+    assert exc_info.value.__cause__ is None
+
+
+def test_load_task_rejects_meta_yml_with_non_mapping_top_level(tmp_path):
+    task_dir = write_task(tmp_path, "001_list_meta")
+    (task_dir / "meta.yml").write_text("- category\n- rails\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_list_meta" in message
+    assert "meta.yml" in message
+    assert "YAML mapping/object" in message
+
+
+def test_load_task_rejects_malformed_meta_yml(tmp_path):
+    task_dir = write_task(tmp_path, "001_malformed_meta")
+    (task_dir / "meta.yml").write_text("category: [rails\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_malformed_meta" in message
+    assert "meta.yml" in message
+    assert "must be valid YAML" in message
+    assert "Traceback" not in message
+    assert exc_info.value.__cause__ is None
+
+
+@pytest.mark.parametrize("meta", ["", "category: ''\n", "category: '   '\n"])
+def test_meta_yml_empty_or_blank_category_defaults_to_general(tmp_path, meta):
+    task_dir = write_task(tmp_path, "001_default_category")
+    (task_dir / "meta.yml").write_text(meta, encoding="utf-8")
+
+    assert load_task(task_dir).category == "general"
+
+
 def test_rails_migration_task_present():
     task = load_task(TASKS_DIR / "021_ar_migration")
     assert "ActiveRecord::Migration" in task.reference()
