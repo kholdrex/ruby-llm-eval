@@ -227,6 +227,84 @@ def test_offline_stub_requires_stub_provider_and_model(monkeypatch):
     assert rc == 2
 
 
+def test_offline_stub_requires_stub_provider_and_model_before_loading_config(
+    tmp_path, monkeypatch, capsys
+):
+    import ruby_llm_eval.cli as cli
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "providers.yaml").write_text(
+        "providers:\n  stub:\n    type: stub\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(cli, "docker_available", lambda: pytest.fail("Docker was checked"))
+
+    rc = main(
+        [
+            "run",
+            "--model",
+            "demo-model",
+            "--provider",
+            "stub",
+            "--offline-stub",
+            "--config-dir",
+            str(config_dir),
+            "--tasks",
+            TASKS_DIR,
+            "--task",
+            "001_fizzbuzz",
+            "-n",
+            "1",
+        ]
+    )
+
+    assert rc == 2
+    assert "--offline-stub requires --provider stub --model stub" in capsys.readouterr().err
+
+
+def test_offline_stub_uses_builtin_stub_config_without_loading_config(tmp_path, monkeypatch):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private", "add")
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "providers.yaml").write_text("providers: {}\n", encoding="utf-8")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: pytest.fail("Docker was checked"))
+
+    output_dir = tmp_path / "results"
+    rc = main(
+        [
+            "run",
+            "--model",
+            "stub",
+            "--provider",
+            "stub",
+            "--offline-stub",
+            "--config-dir",
+            str(config_dir),
+            "--tasks",
+            str(tasks_dir),
+            "--output",
+            str(output_dir),
+            "-n",
+            "1",
+        ]
+    )
+
+    assert rc == 0
+    report = json.loads(next(output_dir.glob("*.json")).read_text(encoding="utf-8"))
+    assert report["evaluation_mode"] == "offline_stub"
+    assert report["cost"] == {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "usd": 0.0,
+        "priced": True,
+    }
+
+
 def test_run_cleans_sandbox_scratch_after_evaluation_failure(tmp_path, monkeypatch):
     tasks_dir = tmp_path / "tasks"
     task_dir = tasks_dir / "001_private"

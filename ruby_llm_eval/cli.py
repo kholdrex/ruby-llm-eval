@@ -96,9 +96,23 @@ def _evaluate_stub_samples(task, samples):
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    config_dir = find_config_dir(args.config_dir)
-    providers = load_providers(config_dir)
-    pricing = load_pricing(config_dir)
+    if args.offline_stub and args.style:
+        _eprint(
+            "Error: --offline-stub cannot be combined with --style; style scoring requires Docker."
+        )
+        return 2
+    if args.offline_stub and (args.provider != "stub" or args.model != "stub"):
+        _eprint("Error: --offline-stub requires --provider stub --model stub.")
+        return 2
+
+    if args.offline_stub:
+        config_dir = None
+        providers = {"stub": {"type": "stub"}}
+        pricing = {"stub": {"input": 0.0, "output": 0.0}}
+    else:
+        config_dir = find_config_dir(args.config_dir)
+        providers = load_providers(config_dir)
+        pricing = load_pricing(config_dir)
 
     if args.n < 1:
         _eprint(f"Error: -n/--samples must be >= 1 (got {args.n}).")
@@ -111,15 +125,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     tasks_dir = find_tasks_dir(args.tasks)
     tasks = discover_tasks(tasks_dir, only=args.task or None)
     task_set_version = read_version(tasks_dir)
-
-    if args.offline_stub and args.style:
-        _eprint(
-            "Error: --offline-stub cannot be combined with --style; style scoring requires Docker."
-        )
-        return 2
-    if args.offline_stub and (args.provider != "stub" or args.model != "stub"):
-        _eprint("Error: --offline-stub requires --provider stub --model stub.")
-        return 2
 
     client = build_client(
         args.provider,
