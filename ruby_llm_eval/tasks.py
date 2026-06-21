@@ -61,7 +61,31 @@ def _read_category(task_dir: Path) -> str:
     meta_path = task_dir / META_FILE
     if not meta_path.is_file():
         return DEFAULT_CATEGORY
-    data = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+    try:
+        text = meta_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"Task '{task_dir.name}' optional file {META_FILE} must be UTF-8 text "
+            f"(invalid byte at offset {exc.start})."
+        ) from None
+
+    try:
+        loaded = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        detail = getattr(exc, "problem", None) or (str(exc).splitlines() or [""])[0]
+        suffix = f" ({detail})." if detail else "."
+        raise ValueError(
+            f"Task '{task_dir.name}' optional file {META_FILE} must be valid YAML{suffix}"
+        ) from None
+
+    if loaded is None:
+        data = {}
+    elif not isinstance(loaded, dict):
+        raise ValueError(
+            f"Task '{task_dir.name}' optional file {META_FILE} must contain a YAML mapping/object."
+        ) from None
+    else:
+        data = loaded
     return str(data.get("category", DEFAULT_CATEGORY)).strip() or DEFAULT_CATEGORY
 
 
