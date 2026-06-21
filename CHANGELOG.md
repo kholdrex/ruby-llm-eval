@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Treat blank task-set `VERSION` files as `unknown` and report invalid UTF-8 with task-set-specific diagnostics.
 - Reject non-string optional task `meta.yml` category values with task/file-specific diagnostics, and treat explicit null categories as the default `general` category.
 - Improve optional task `meta.yml` validation diagnostics for malformed private/BYO task files.
 - Add explicit `--offline-stub` mode for provider-free, no-Docker private task selection smoke checks; reports are marked as non-sandboxed offline stub output.

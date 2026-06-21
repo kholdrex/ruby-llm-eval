@@ -231,6 +231,13 @@ def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]
 def read_version(tasks_dir: Path) -> str:
     """Read the task-set VERSION file (recorded in every run for reproducibility)."""
     version_file = tasks_dir / "VERSION"
-    if version_file.is_file():
-        return version_file.read_text(encoding="utf-8").strip()
-    return "unknown"
+    if not version_file.is_file():
+        return "unknown"
+    try:
+        version = version_file.read_text(encoding="utf-8").strip()
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"Task set VERSION file at {version_file} must be UTF-8 text "
+            f"(invalid byte at offset {exc.start})."
+        ) from None
+    return version or "unknown"
