@@ -13,7 +13,16 @@ def _results(statuses):
     return [SampleResult("t", i, s) for i, s in enumerate(statuses)]
 
 
-def _report(summaries, *, k=1, input_tokens=0, output_tokens=0, style_enabled=False):
+def _report(
+    summaries,
+    *,
+    k=1,
+    input_tokens=0,
+    output_tokens=0,
+    style_enabled=False,
+    evaluation_mode="sandbox",
+    sandboxed=True,
+):
     return build_report(
         model="demo-model",
         provider="stub",
@@ -28,6 +37,8 @@ def _report(summaries, *, k=1, input_tokens=0, output_tokens=0, style_enabled=Fa
         pricing=PRICING,
         timestamp="20990101T000000",
         style_enabled=style_enabled,
+        evaluation_mode=evaluation_mode,
+        sandboxed=sandboxed,
     )
 
 
@@ -116,6 +127,21 @@ def test_build_report_overall_clean_rate_and_flag():
     assert report["style_enabled"] is True
     # clean rates 1.0 and 0.5 -> mean 0.75
     assert report["overall_clean_rate"] == 0.75
+
+
+def test_build_report_records_evaluation_mode():
+    summaries = [summarize_task("a", _results(["passed"]), n=1)]
+    report = _report(summaries, evaluation_mode="offline_stub", sandboxed=False)
+    assert report["evaluation_mode"] == "offline_stub"
+    assert report["sandboxed"] is False
+
+
+def test_render_markdown_warns_for_offline_stub_results():
+    summaries = [summarize_task("a", _results(["passed"]), n=1)]
+    md = render_markdown(_report(summaries, evaluation_mode="offline_stub", sandboxed=False))
+    assert "OFFLINE STUB REPORT" in md
+    assert "NOT A REAL SANDBOXED EVALUATION" in md
+    assert "Docker was bypassed" in md
 
 
 def test_categories_breakdown():

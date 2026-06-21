@@ -12,8 +12,13 @@ cd ruby-llm-eval
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Sanity check (no API key needed): runs the seed tasks against the stub model.
+# Sanity check (no API key needed): runs the seed tasks against the stub model
+# through the Docker sandbox.
 ruby-llm-eval run --provider stub --model stub
+
+# No Docker available yet? This only verifies CLI/task-selection plumbing and
+# writes reports marked evaluation_mode=offline_stub / sandboxed=false.
+ruby-llm-eval run --provider stub --model stub --offline-stub
 ```
 
 Before opening a PR:
@@ -125,11 +130,14 @@ rm -rf "$tmp"
 ```
 
 **6. Run it through the real pipeline** with the stub model (which uses the
-reference), to confirm the harness picks it up:
+reference), to confirm the harness picks it up in the Docker sandbox:
 
 ```bash
 ruby-llm-eval run --provider stub --model stub --task 011_sum_even
 ```
+
+If Docker is not available yet, add `--offline-stub` for a task-selection-only
+plumbing check. Offline stub reports are not real sandboxed correctness results.
 
 That's the whole contribution surface — no registry to edit, no code to touch.
 

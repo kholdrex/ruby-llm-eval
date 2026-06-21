@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add explicit `--offline-stub` mode for provider-free, no-Docker private task selection smoke checks; reports are marked as non-sandboxed offline stub output.
 - Retry provider requests without `temperature` when a model rejects it (e.g.
   Claude Opus 4.8 and reasoning models return 400), instead of failing the run.
 - Add 8 more Rails tasks (has_many :through, enum, strong params, custom

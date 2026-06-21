@@ -106,6 +106,8 @@ def build_report(
     pricing: dict,
     timestamp: str,
     style_enabled: bool = False,
+    evaluation_mode: str = "sandbox",
+    sandboxed: bool = True,
 ) -> dict:
     overall = (
         sum(t["pass_at_k"] for t in task_summaries) / len(task_summaries) if task_summaries else 0.0
@@ -129,6 +131,8 @@ def build_report(
         "metric": f"pass@{k}",
         "overall_pass_at_k": round(overall, 4),
         "style_enabled": style_enabled,
+        "evaluation_mode": evaluation_mode,
+        "sandboxed": sandboxed,
         "overall_clean_rate": overall_clean,
         "categories": _summarize_categories(task_summaries),
         "tasks": task_summaries,
@@ -156,6 +160,16 @@ def render_markdown(report: dict) -> str:
     cost = _fmt_cost(report["cost"])
     overall_pct = f"{report['overall_pass_at_k'] * 100:.1f}%"
     style_on = report.get("style_enabled")
+    warning = []
+    if report.get("evaluation_mode") == "offline_stub" or report.get("sandboxed") is False:
+        warning = [
+            "⚠️ **OFFLINE STUB REPORT — NOT A REAL SANDBOXED EVALUATION.**",
+            "",
+            "Docker was bypassed, `sandboxed` is false, and reported pass rates only "
+            "reflect deterministic stub/reference-sample plumbing.",
+            "Do not compare this output with real model or Docker sandbox correctness results.",
+            "",
+        ]
 
     if style_on:
         clean = _clean_pct(report.get("overall_clean_rate"))
@@ -207,6 +221,7 @@ def render_markdown(report: dict) -> str:
         f"Task set `v{report['task_set_version']}` · "
         f"N={report['n']} · k={report['k']} · temperature={report['temperature']}",
         "",
+        *warning,
         *summary,
         "",
         *category_block,

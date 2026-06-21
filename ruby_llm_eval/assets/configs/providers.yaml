@@ -2,7 +2,7 @@
 # `type` (implemented in ruby_llm_eval/model_client.py) plus connection details.
 #
 #   type         which adapter to use: "openai" (OpenAI-compatible /chat/
-#                completions), "anthropic" (Messages API), or "stub" (offline).
+#                completions), "anthropic" (Messages API), or "stub" (no provider API).
 #   base_url     the API root the adapter posts to.
 #   api_key_env  the environment variable the key is read from (never the key
 #                itself — see .env.example).
