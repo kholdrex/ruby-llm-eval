@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject unsafe task directory ids that could break Markdown report tables.
 - Reject selected task ids containing control or non-printable characters before discovery with clearer invalid-id diagnostics.
 - Reject unsafe optional task `meta.yml` category labels that could break Markdown report tables.
 - Treat blank task-set `VERSION` files as `unknown` and report invalid UTF-8 with task-set-specific diagnostics.

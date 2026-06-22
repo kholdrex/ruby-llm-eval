@@ -110,6 +110,32 @@ def _read_category(task_dir: Path) -> str:
     return category
 
 
+def _format_task_id_for_message(task_id: str) -> str:
+    if task_id == "":
+        return "<empty>"
+    if not task_id.strip():
+        return "<blank>"
+    if _has_non_printable_characters(task_id):
+        return repr(task_id)
+    return task_id
+
+
+def _validate_task_directory_id(task_dir: Path) -> None:
+    task_id = task_dir.name
+    if (
+        not task_id.strip()
+        or task_id != task_id.strip()
+        or "|" in task_id
+        or _has_non_printable_characters(task_id)
+    ):
+        label = _format_task_id_for_message(task_id)
+        raise ValueError(
+            f"Task directory id {label} must be a nonblank single-line report label "
+            "without leading or trailing whitespace, control or non-printable "
+            "characters, or the '|' character."
+        )
+
+
 def _detect_framework(task_dir: Path) -> tuple[str, str]:
     """Return (framework, test_filename) for a task, requiring exactly one."""
     present = [(fw, fn) for fw, fn in TEST_FILES.items() if (task_dir / fn).is_file()]
@@ -125,6 +151,8 @@ def _detect_framework(task_dir: Path) -> tuple[str, str]:
 
 def load_task(task_dir: Path) -> Task:
     """Load a task directory, validating required files exist and are non-empty."""
+    _validate_task_directory_id(task_dir)
+
     if not (task_dir / PROMPT_FILE).is_file():
         raise ValueError(f"Task '{task_dir.name}' is missing {PROMPT_FILE}.")
     if not (task_dir / REFERENCE_FILE).is_file():
@@ -150,15 +178,7 @@ def load_task(task_dir: Path) -> Task:
 
 
 def _format_invalid_selected_task_id(task_id: str) -> str:
-    if task_id == "":
-        return "<empty>"
-    if not task_id.strip():
-        return "<blank>"
-    if _has_non_printable_characters(task_id):
-        return repr(task_id)
-    if task_id != task_id.strip():
-        return task_id
-    return task_id
+    return _format_task_id_for_message(task_id)
 
 
 def _has_non_printable_characters(value: str) -> bool:
@@ -175,6 +195,7 @@ def _invalid_selected_task_ids(task_ids: list[str]) -> list[str]:
             or task_id in {".", ".."}
             or "/" in task_id
             or "\\" in task_id
+            or "|" in task_id
             or _has_non_printable_characters(task_id)
         ):
             label = _format_invalid_selected_task_id(task_id)
@@ -202,7 +223,7 @@ def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]
                 f"Invalid selected task id(s): {', '.join(invalid)}. "
                 "Task ids must be non-empty directory names, not paths, must not "
                 "have leading or trailing whitespace, and must not contain control or "
-                "non-printable characters."
+                "non-printable characters or '|'."
             )
 
         seen: set[str] = set()
