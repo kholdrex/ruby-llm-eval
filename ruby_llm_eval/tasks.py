@@ -284,4 +284,15 @@ def read_version(tasks_dir: Path) -> str:
             f"Task set VERSION file at {version_file} must be UTF-8 text "
             f"(invalid byte at offset {exc.start})."
         ) from None
-    return version or "unknown"
+    if not version:
+        return "unknown"
+    if (
+        "|" in version
+        or version.splitlines() != [version]
+        or _has_non_printable_characters(version)
+    ):
+        raise ValueError(
+            f"Task set VERSION file at {version_file} must be a single-line "
+            "report label without control characters or '|'."
+        )
+    return version
