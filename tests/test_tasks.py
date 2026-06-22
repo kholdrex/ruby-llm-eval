@@ -74,6 +74,28 @@ def test_path_like_selected_task_id_raises(tmp_path, task_id):
     assert "Task ids must be non-empty directory names, not paths" in message
 
 
+@pytest.mark.parametrize(
+    ("task_id", "expected_label"),
+    [
+        ("001_private\n002_private", repr("001_private\n002_private")),
+        ("001_private\r", repr("001_private\r")),
+        ("001_private\x00", repr("001_private\x00")),
+        ("001_private\u200b", repr("001_private\u200b")),
+    ],
+)
+def test_non_printable_selected_task_id_raises(tmp_path, task_id, expected_label):
+    write_task(tmp_path, "001_private")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=[task_id])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert expected_label in message
+    assert "must not contain control or non-printable characters" in message
+    assert "Unknown task id" not in message
+
+
 @pytest.mark.parametrize(("task_id", "label"), [("", "<empty>"), ("   ", "<blank>")])
 def test_blank_selected_task_id_raises(tmp_path, task_id, label):
     write_task(tmp_path, "001_private")
@@ -88,8 +110,15 @@ def test_blank_selected_task_id_raises(tmp_path, task_id, label):
     assert "Unknown task id" not in message
 
 
-@pytest.mark.parametrize("task_id", [" 001_private", "001_private ", "\t001_private"])
-def test_padded_selected_task_id_raises(tmp_path, task_id):
+@pytest.mark.parametrize(
+    ("task_id", "expected_label"),
+    [
+        (" 001_private", " 001_private"),
+        ("001_private ", "001_private "),
+        ("\t001_private", repr("\t001_private")),
+    ],
+)
+def test_padded_selected_task_id_raises(tmp_path, task_id, expected_label):
     write_task(tmp_path, "001_private")
 
     with pytest.raises(ValueError) as exc_info:
@@ -97,7 +126,7 @@ def test_padded_selected_task_id_raises(tmp_path, task_id):
 
     message = str(exc_info.value)
     assert "Invalid selected task id(s)" in message
-    assert task_id in message
+    assert expected_label in message
     assert "Task ids must be non-empty directory names" in message
     assert "Unknown task id" not in message
 
@@ -118,7 +147,7 @@ def test_padded_selected_task_ids_report_all_invalid_ids(tmp_path):
     assert "Invalid selected task id(s)" in message
     assert leading_padded in message
     assert trailing_padded in message
-    assert tab_padded in message
+    assert repr(tab_padded) in message
     assert "001_private" not in message
 
 

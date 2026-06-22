@@ -154,7 +154,15 @@ def _format_invalid_selected_task_id(task_id: str) -> str:
         return "<empty>"
     if not task_id.strip():
         return "<blank>"
+    if _has_non_printable_characters(task_id):
+        return repr(task_id)
+    if task_id != task_id.strip():
+        return task_id
     return task_id
+
+
+def _has_non_printable_characters(value: str) -> bool:
+    return any(unicodedata.category(char).startswith("C") for char in value)
 
 
 def _invalid_selected_task_ids(task_ids: list[str]) -> list[str]:
@@ -167,6 +175,7 @@ def _invalid_selected_task_ids(task_ids: list[str]) -> list[str]:
             or task_id in {".", ".."}
             or "/" in task_id
             or "\\" in task_id
+            or _has_non_printable_characters(task_id)
         ):
             label = _format_invalid_selected_task_id(task_id)
             if label not in seen:
@@ -191,8 +200,9 @@ def discover_tasks(tasks_dir: Path, only: list[str] | None = None) -> list[Task]
         if invalid:
             raise ValueError(
                 f"Invalid selected task id(s): {', '.join(invalid)}. "
-                "Task ids must be non-empty directory names, not paths, and must not "
-                "have leading or trailing whitespace."
+                "Task ids must be non-empty directory names, not paths, must not "
+                "have leading or trailing whitespace, and must not contain control or "
+                "non-printable characters."
             )
 
         seen: set[str] = set()
