@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject unsafe task-set `VERSION` labels that could break CLI or Markdown report output.
 - Reject unsafe task directory ids that could break Markdown report tables.
 - Reject selected task ids containing control or non-printable characters before discovery with clearer invalid-id diagnostics.
 - Reject unsafe optional task `meta.yml` category labels that could break Markdown report tables.
