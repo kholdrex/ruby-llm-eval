@@ -571,6 +571,25 @@ def test_version_is_recorded():
     assert read_version(TASKS_DIR) == "0.6.0"
 
 
+def test_blank_version_defaults_to_unknown(tmp_path):
+    (tmp_path / "VERSION").write_text("  \n", encoding="utf-8")
+
+    assert read_version(tmp_path) == "unknown"
+
+
+@pytest.mark.parametrize("version", ["0.6.0|bad", "0.6.0\n0.7.0", "0.6.0\x00", "0.6.0\u200b"])
+def test_unsafe_version_label_raises(tmp_path, version):
+    (tmp_path / "VERSION").write_text(version, encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        read_version(tmp_path)
+
+    message = str(exc_info.value)
+    assert "Task set VERSION file" in message
+    assert "single-line report label" in message
+    assert "control characters or '|'" in message
+
+
 def test_rails_category_count():
     rails = [t for t in discover_tasks(TASKS_DIR) if t.category == "rails"]
     assert len(rails) >= 14
