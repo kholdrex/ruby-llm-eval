@@ -25,6 +25,7 @@ REFERENCE_FILE = "solution_ref.rb"
 # Optional per-task metadata (e.g. `category: rails`); absent => general.
 META_FILE = "meta.yml"
 DEFAULT_CATEGORY = "general"
+SUPPORTED_META_KEYS = {"category"}
 
 # Map each supported framework to the test filename that selects it.
 TEST_FILES = {"minitest": "test.rb", "rspec": "spec.rb"}
@@ -87,6 +88,15 @@ def _read_category(task_dir: Path) -> str:
         ) from None
     else:
         data = loaded
+
+    unknown_keys = sorted((key for key in data if key not in SUPPORTED_META_KEYS), key=str)
+    if unknown_keys:
+        formatted_keys = ", ".join(str(key) for key in unknown_keys)
+        raise ValueError(
+            f"Task '{task_dir.name}' optional file {META_FILE} contains unknown key(s): "
+            f"{formatted_keys}. Supported key(s): {', '.join(sorted(SUPPORTED_META_KEYS))}."
+        )
+
     category = data.get("category", DEFAULT_CATEGORY)
     if category is None:
         return DEFAULT_CATEGORY
