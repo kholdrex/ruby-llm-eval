@@ -74,6 +74,19 @@ def test_path_like_selected_task_id_raises(tmp_path, task_id):
     assert "Task ids must be non-empty directory names, not paths" in message
 
 
+def test_table_separator_selected_task_id_raises(tmp_path):
+    write_task(tmp_path, "001_private")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001|private"])
+
+    message = str(exc_info.value)
+    assert "Invalid selected task id(s)" in message
+    assert "001|private" in message
+    assert "non-printable characters or '|'" in message
+    assert "Unknown task id" not in message
+
+
 @pytest.mark.parametrize(
     ("task_id", "expected_label"),
     [
@@ -315,6 +328,43 @@ def test_discovers_valid_custom_task(tmp_path):
     assert tasks[0].prompt == "Implement add(a, b).\n"
     assert tasks[0].test == 'require_relative "solution"\n'
     assert tasks[0].reference() == "def add(a, b)\n  a + b\nend\n"
+
+
+def test_load_task_rejects_table_separator_task_directory_id(tmp_path):
+    task_dir = write_task(tmp_path, "001|bad")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "Task directory id 001|bad" in message
+    assert "single-line report label" in message
+    assert "or the '|' character" in message
+
+
+def test_discover_tasks_rejects_default_task_directory_id_with_table_separator(tmp_path):
+    write_task(tmp_path, "001|bad")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path)
+
+    message = str(exc_info.value)
+    assert "Task directory id 001|bad" in message
+    assert "single-line report label" in message
+    assert "or the '|' character" in message
+
+
+def test_discover_tasks_rejects_default_task_directory_id_with_non_printable_char(tmp_path):
+    task_id = "001_bad\x7fname"
+    write_task(tmp_path, task_id)
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path)
+
+    message = str(exc_info.value)
+    assert f"Task directory id {task_id!r}" in message
+    assert "single-line report label" in message
+    assert "control or non-printable characters" in message
 
 
 @pytest.mark.parametrize(
