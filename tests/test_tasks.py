@@ -490,6 +490,38 @@ def test_load_task_rejects_malformed_meta_yml(tmp_path):
     assert exc_info.value.__cause__ is None
 
 
+def test_load_task_rejects_meta_yml_with_unknown_key(tmp_path):
+    task_dir = write_task(tmp_path, "001_unknown_meta")
+    (task_dir / "meta.yml").write_text("difficulty: hard\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_unknown_meta" in message
+    assert "meta.yml" in message
+    assert "unknown key" in message
+    assert "difficulty" in message
+    assert "category" in message
+
+
+def test_load_task_rejects_meta_yml_with_multiple_unknown_keys(tmp_path):
+    task_dir = write_task(tmp_path, "001_unknown_meta_keys")
+    (task_dir / "meta.yml").write_text(
+        "category: rails\ndifficulty: hard\ntags: private\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_unknown_meta_keys" in message
+    assert "meta.yml" in message
+    assert "unknown key" in message
+    assert "difficulty" in message
+    assert "tags" in message
+
+
 @pytest.mark.parametrize("meta", ["", "category: ''\n", "category: '   '\n", "category:\n"])
 def test_meta_yml_empty_or_blank_category_defaults_to_general(tmp_path, meta):
     task_dir = write_task(tmp_path, "001_default_category")
