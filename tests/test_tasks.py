@@ -505,6 +505,30 @@ def test_load_task_rejects_meta_yml_with_unknown_key(tmp_path):
     assert "category" in message
 
 
+@pytest.mark.parametrize(
+    "meta",
+    [
+        "1: numeric\n",
+        "true: boolean\n",
+        "null: missing\n",
+        "category: rails\n2: numeric\n",
+    ],
+)
+def test_load_task_rejects_meta_yml_with_non_string_key(tmp_path, meta):
+    task_dir = write_task(tmp_path, "001_non_string_meta_key")
+    (task_dir / "meta.yml").write_text(meta, encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_non_string_meta_key" in message
+    assert "meta.yml" in message
+    assert "non-string key" in message
+    assert "keys must be strings" in message
+    assert "unknown key" not in message
+
+
 def test_load_task_rejects_meta_yml_with_multiple_unknown_keys(tmp_path):
     task_dir = write_task(tmp_path, "001_unknown_meta_keys")
     (task_dir / "meta.yml").write_text(

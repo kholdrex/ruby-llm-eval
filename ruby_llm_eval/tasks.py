@@ -89,6 +89,14 @@ def _read_category(task_dir: Path) -> str:
     else:
         data = loaded
 
+    non_string_keys = sorted((key for key in data if not isinstance(key, str)), key=str)
+    if non_string_keys:
+        formatted_keys = ", ".join(str(key) for key in non_string_keys)
+        raise ValueError(
+            f"Task '{task_dir.name}' optional file {META_FILE} contains non-string key(s): "
+            f"{formatted_keys}. All {META_FILE} keys must be strings."
+        )
+
     unknown_keys = sorted((key for key in data if key not in SUPPORTED_META_KEYS), key=str)
     if unknown_keys:
         formatted_keys = ", ".join(str(key) for key in unknown_keys)
