@@ -311,6 +311,42 @@ def test_selected_malformed_task_reports_multiple_test_files(tmp_path):
     assert "test.rb / spec.rb" in message
 
 
+def test_selected_malformed_task_reports_multiple_file_errors(tmp_path):
+    task_dir = tmp_path / "001_multiple_file_issues"
+    task_dir.mkdir()
+    (task_dir / TEST_FILES["minitest"]).write_text(
+        'require_relative "solution"\n',
+        encoding="utf-8",
+    )
+    (task_dir / TEST_FILES["rspec"]).write_text(
+        'require_relative "solution"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001_multiple_file_issues"])
+
+    message = str(exc_info.value)
+    assert "001_multiple_file_issues" in message
+    assert "missing prompt.md" in message
+    assert "missing solution_ref.rb" in message
+    assert "has multiple test files" in message
+
+
+def test_selected_malformed_task_reports_missing_reference_and_test_file(tmp_path):
+    task_dir = tmp_path / "001_missing_reference_and_test"
+    task_dir.mkdir()
+    (task_dir / PROMPT_FILE).write_text("Implement add(a, b).\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        discover_tasks(tmp_path, only=["001_missing_reference_and_test"])
+
+    message = str(exc_info.value)
+    assert "001_missing_reference_and_test" in message
+    assert "missing solution_ref.rb" in message
+    assert "has no test file" in message
+
+
 def test_task_has_reference_and_test():
     task = load_task(TASKS_DIR / "001_fizzbuzz")
     assert "fizzbuzz" in task.prompt.lower()
