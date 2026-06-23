@@ -154,29 +154,44 @@ def _validate_task_directory_id(task_dir: Path) -> None:
         )
 
 
-def _detect_framework(task_dir: Path) -> tuple[str, str]:
-    """Return (framework, test_filename) for a task, requiring exactly one."""
+def _detect_framework(task_dir: Path) -> tuple[tuple[str, str] | None, list[str]]:
+    """Return (framework, test_filename) for a task, collecting any framework errors."""
     present = [(fw, fn) for fw, fn in TEST_FILES.items() if (task_dir / fn).is_file()]
     options = " / ".join(TEST_FILES.values())
     if not present:
-        raise ValueError(f"Task '{task_dir.name}' has no test file (expected one of: {options}).")
+        return None, [f"has no test file (expected one of: {options})."]
     if len(present) > 1:
-        raise ValueError(
-            f"Task '{task_dir.name}' has multiple test files; include exactly one of {options}."
-        )
-    return present[0]
+        return None, [f"has multiple test files; include exactly one of {options}."]
+    return present[0], []
+
+
+def _collect_task_file_errors(task_dir: Path) -> tuple[list[str], str | None, str | None]:
+    """Collect malformed-file problems before reading task contents."""
+    issues: list[str] = []
+    for filename in (PROMPT_FILE, REFERENCE_FILE):
+        if not (task_dir / filename).is_file():
+            issues.append(f"missing {filename}")
+
+    framework_and_file, framework_errors = _detect_framework(task_dir)
+    issues.extend(framework_errors)
+
+    framework = test_filename = None
+    if framework_and_file:
+        framework, test_filename = framework_and_file
+
+    return issues, framework, test_filename
 
 
 def load_task(task_dir: Path) -> Task:
     """Load a task directory, validating required files exist and are non-empty."""
     _validate_task_directory_id(task_dir)
 
-    if not (task_dir / PROMPT_FILE).is_file():
-        raise ValueError(f"Task '{task_dir.name}' is missing {PROMPT_FILE}.")
-    if not (task_dir / REFERENCE_FILE).is_file():
-        raise ValueError(f"Task '{task_dir.name}' is missing {REFERENCE_FILE}.")
+    file_errors, framework, test_filename = _collect_task_file_errors(task_dir)
+    if file_errors:
+        raise ValueError(f"Task '{task_dir.name}' has malformed file(s): {', '.join(file_errors)}")
 
-    framework, test_filename = _detect_framework(task_dir)
+    if framework is None or test_filename is None:
+        raise RuntimeError(f"Task '{task_dir.name}' has malformed test files.")
 
     required = (PROMPT_FILE, REFERENCE_FILE, test_filename)
     contents = {name: _read_required(task_dir, name) for name in required}
