@@ -22,12 +22,29 @@ PACKAGE_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 
 def _find_dir_containing(
-    dir_name: str, marker: str, explicit: str | None = None, env: str | None = None
+    dir_name: str,
+    marker: str,
+    explicit: str | None = None,
+    env: str | None = None,
+    strict_explicit: bool = False,
 ) -> Path:
     """Find a sibling directory ``dir_name`` that contains ``marker``."""
-    candidates: list[Path] = []
     if explicit:
-        candidates.append(Path(explicit))
+        explicit_path = Path(explicit)
+        if (explicit_path / marker).is_file():
+            return explicit_path
+
+        if strict_explicit:
+            if not explicit_path.exists():
+                raise FileNotFoundError(f"Explicit {dir_name} path does not exist: {explicit_path}")
+            raise FileNotFoundError(
+                f"Could not find '{marker}' in explicit {dir_name} path: {explicit_path}"
+            )
+
+        # Backward-compatible behavior: if non-strict explicit path is not usable,
+        # continue searching env/config/package fallbacks.
+
+    candidates: list[Path] = []
     if env and os.environ.get(env):
         candidates.append(Path(os.environ[env]))
 
@@ -51,7 +68,9 @@ def _find_dir_containing(
 
 def find_config_dir(explicit: str | None = None) -> Path:
     """Return the directory holding providers.yaml and pricing.yaml."""
-    return _find_dir_containing("configs", "providers.yaml", explicit, CONFIG_DIR_ENV)
+    return _find_dir_containing(
+        "configs", "providers.yaml", explicit, CONFIG_DIR_ENV, strict_explicit=True
+    )
 
 
 def find_sandbox_dir(explicit: str | None = None) -> Path:
