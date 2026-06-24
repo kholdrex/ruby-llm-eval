@@ -38,6 +38,7 @@
   `actionpack` + `rack-test`. Task set bumped to v0.4.0 (22 tasks).
 - Report selected task ids that point at files as task/file-specific validation errors instead of generic unknown ids.
 - Reject duplicate selected task ids before discovering task suites for runs or listings.
+- Add focused discovery tests for installed-package config/task assets when running outside a source checkout (`--config-dir` env/sandbox fallbacks + task fallback pathing).
 - Add installed-wheel coverage verifying bundled configs, sandbox assets, and task files are discoverable outside a source checkout.
 - Add Rails-aware tasks: ActiveRecord scopes, validations, and associations run
   against in-memory SQLite in the sandbox (`activerecord` + `sqlite3` are
