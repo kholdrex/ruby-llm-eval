@@ -3,8 +3,10 @@ from pathlib import Path
 import pytest
 
 from ruby_llm_eval.config import (
+    CONFIG_DIR_ENV,
     find_config_dir,
     find_sandbox_dir,
+    find_tasks_dir,
     load_pricing,
     load_providers,
     load_rubocop_config,
@@ -100,3 +102,41 @@ def test_find_sandbox_dir_with_nonexistent_explicit_path_falls_back_to_env(tmp_p
     found = find_sandbox_dir(explicit=str(explicit))
 
     assert found == sandbox
+
+
+def test_find_config_dir_falls_back_to_packaged_assets_without_repo(tmp_path, monkeypatch):
+    packaged_root = tmp_path / "installed-assets"
+    packaged_configs = packaged_root / "configs"
+    packaged_configs.mkdir(parents=True)
+    (packaged_configs / "providers.yaml").write_text(
+        "providers:\n  stub:\n    type: stub\n", encoding="utf-8"
+    )
+    (packaged_configs / "pricing.yaml").write_text(
+        "models:\n  stub:\n    input: 0.0\n    output: 0.0\n", encoding="utf-8"
+    )
+
+    # Set a wrong env override path so this test is explicitly exercising the
+    # packaged-asset fallback path when repo discovery and env-provided configs fail.
+    monkeypatch.setenv(CONFIG_DIR_ENV, str(tmp_path / "env-config"))
+    monkeypatch.setattr("ruby_llm_eval.config.PACKAGE_ASSETS_DIR", packaged_root)
+    outside_source = tmp_path / "outside-source"
+    outside_source.mkdir()
+    monkeypatch.chdir(outside_source)
+
+    found = find_config_dir()
+    assert found == packaged_configs
+
+
+def test_find_tasks_dir_falls_back_to_packaged_assets_without_repo(tmp_path, monkeypatch):
+    packaged_root = tmp_path / "installed-assets"
+    packaged_tasks = packaged_root / "tasks"
+    packaged_tasks.mkdir(parents=True)
+    (packaged_tasks / "VERSION").write_text("0.0.0\n", encoding="utf-8")
+
+    monkeypatch.setattr("ruby_llm_eval.config.PACKAGE_ASSETS_DIR", packaged_root)
+    outside_source = tmp_path / "outside-source"
+    outside_source.mkdir()
+    monkeypatch.chdir(outside_source)
+
+    found = find_tasks_dir()
+    assert found == packaged_tasks
