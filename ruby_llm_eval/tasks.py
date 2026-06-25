@@ -14,6 +14,7 @@ registry to edit.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,9 @@ SUPPORTED_META_KEYS = {"category"}
 
 # Map each supported framework to the test filename that selects it.
 TEST_FILES = {"minitest": "test.rb", "rspec": "spec.rb"}
+SOLUTION_REQUIREMENT_PATTERN = re.compile(
+    r'^\s*require_relative\s+["\']solution["\']\s*$', re.MULTILINE
+)
 
 
 @dataclass(frozen=True)
@@ -182,6 +186,120 @@ def _collect_task_file_errors(task_dir: Path) -> tuple[list[str], str | None, st
     return issues, framework, test_filename
 
 
+def _heredoc_labels_for_line(line: str) -> list[str]:
+    labels: list[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    escape = False
+    index = 0
+    length = len(line)
+
+    while index < length:
+        char = line[index]
+
+        if in_single_quote:
+            if char == "'":
+                in_single_quote = False
+            index += 1
+            continue
+
+        if in_double_quote:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_double_quote = False
+            index += 1
+            continue
+
+        if char == "#":
+            break
+        if char == "'":
+            in_single_quote = True
+            index += 1
+            continue
+        if char == '"':
+            in_double_quote = True
+            index += 1
+            continue
+        if line[index : index + 2] != "<<":
+            index += 1
+            continue
+
+        candidate_index = index + 2
+        if candidate_index < length and line[candidate_index] in {"-", "~"}:
+            candidate_index += 1
+        if candidate_index >= length:
+            break
+
+        quote = line[candidate_index] if line[candidate_index] in {"'", '"'} else None
+        if quote is not None:
+            candidate_index += 1
+
+        label_start = candidate_index
+        while candidate_index < length and (
+            line[candidate_index].isalnum() or line[candidate_index] == "_"
+        ):
+            candidate_index += 1
+        label = line[label_start:candidate_index]
+        if not label or not (label[0].isalpha() or label[0] == "_"):
+            index += 1
+            continue
+
+        if quote is not None:
+            if candidate_index >= length or line[candidate_index] != quote:
+                index += 1
+                continue
+            candidate_index += 1
+
+        labels.append(label)
+        index = candidate_index
+
+    return labels
+
+
+def _test_requires_solution(test_contents: str) -> bool:
+    heredoc_labels: list[str] = []
+    in_block_comment = False
+
+    for line in test_contents.splitlines():
+        if in_block_comment:
+            if line == "=end":
+                in_block_comment = False
+            continue
+
+        if line == "=begin":
+            in_block_comment = True
+            continue
+
+        if line == "__END__":
+            return False
+
+        stripped = line.strip()
+        if heredoc_labels:
+            if stripped == heredoc_labels[0]:
+                heredoc_labels.pop(0)
+            continue
+
+        if SOLUTION_REQUIREMENT_PATTERN.fullmatch(line):
+            return True
+
+        heredoc_labels = _heredoc_labels_for_line(line)
+
+    return False
+
+
+def _validate_test_contents(task_dir: Path, test_filename: str, test_contents: str) -> None:
+    if _test_requires_solution(test_contents):
+        return
+
+    raise ValueError(
+        f"Task '{task_dir.name}' file {test_filename} must include a standalone "
+        'require_relative "solution" line so benchmark tests execute solution.rb.'
+    )
+
+
 def load_task(task_dir: Path) -> Task:
     """Load a task directory, validating required files exist and are non-empty."""
     _validate_task_directory_id(task_dir)
@@ -198,6 +316,8 @@ def load_task(task_dir: Path) -> Task:
     empty = [name for name, content in contents.items() if not content.strip()]
     if empty:
         raise ValueError(f"Task '{task_dir.name}' has empty required file(s): {', '.join(empty)}")
+
+    _validate_test_contents(task_dir, test_filename, contents[test_filename])
 
     return Task(
         id=task_dir.name,
