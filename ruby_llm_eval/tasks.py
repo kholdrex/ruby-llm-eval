@@ -187,7 +187,152 @@ def _collect_task_file_errors(task_dir: Path) -> tuple[list[str], str | None, st
     return issues, framework, test_filename
 
 
+def _matching_delimiter(delimiter: str) -> str:
+    return {"(": ")", "[": "]", "{": "}", "<": ">"}.get(delimiter, delimiter)
+
+
+def _mask_same_line_non_heredoc_literals(line: str) -> str:
+    masked = list(line)
+    index = 0
+    length = len(masked)
+
+    def mask_range(start: int, end: int) -> None:
+        for position in range(start, min(end, length)):
+            masked[position] = " "
+
+    def previous_significant_character(position: int) -> str | None:
+        previous = position - 1
+        while previous >= 0 and masked[previous].isspace():
+            previous -= 1
+        if previous < 0:
+            return None
+        return masked[previous]
+
+    def previous_significant_word(position: int) -> str | None:
+        previous = position - 1
+        while previous >= 0 and masked[previous].isspace():
+            previous -= 1
+        if previous < 0 or not masked[previous].isalpha():
+            return None
+
+        end = previous + 1
+        start = previous
+        while start >= 0 and masked[start].isalpha():
+            start -= 1
+        return "".join(masked[start + 1 : end])
+
+    while index < length:
+        char = line[index]
+
+        if char == "#":
+            break
+
+        if char in {"'", '"', "`"}:
+            delimiter = char
+            end = index + 1
+            escape = False
+            while end < length:
+                current = line[end]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif current == delimiter:
+                    end += 1
+                    break
+                end += 1
+            mask_range(index, end)
+            index = end
+            continue
+
+        if char == "%":
+            next_index = index + 1
+            if next_index >= length:
+                index += 1
+                continue
+
+            if line[next_index].isalnum():
+                next_index += 1
+            if next_index >= length:
+                index += 1
+                continue
+
+            delimiter = line[next_index]
+            closing_delimiter = _matching_delimiter(delimiter)
+            if delimiter.isalnum() or delimiter.isspace():
+                index += 1
+                continue
+
+            end = next_index + 1
+            depth = 1 if closing_delimiter != delimiter else 0
+            escape = False
+            while end < length:
+                current = line[end]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif closing_delimiter != delimiter and current == delimiter:
+                    depth += 1
+                elif current == closing_delimiter:
+                    if closing_delimiter == delimiter:
+                        end += 1
+                        break
+                    depth -= 1
+                    if depth == 0:
+                        end += 1
+                        break
+                end += 1
+            mask_range(index, end)
+            index = end
+            continue
+
+        previous_word = previous_significant_word(index)
+        if char == "/" and (
+            previous_significant_character(index)
+            in {
+                None,
+                "(",
+                "=",
+                ",",
+                "[",
+                "{",
+                ":",
+                "?",
+                "!",
+            }
+            or previous_word in {"if", "unless", "while", "until", "when", "case", "return"}
+        ):
+            end = index + 1
+            escape = False
+            in_character_class = False
+            while end < length:
+                current = line[end]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif current == "[":
+                    in_character_class = True
+                elif current == "]" and in_character_class:
+                    in_character_class = False
+                elif current == "/" and not in_character_class:
+                    end += 1
+                    break
+                end += 1
+            while end < length and line[end].isalpha():
+                end += 1
+            mask_range(index, end)
+            index = end
+            continue
+
+        index += 1
+
+    return "".join(masked)
+
+
 def _heredoc_labels_for_line(line: str) -> list[str]:
+    line = _mask_same_line_non_heredoc_literals(line)
     labels: list[str] = []
     in_single_quote = False
     in_double_quote = False

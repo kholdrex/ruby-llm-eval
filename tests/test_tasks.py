@@ -533,11 +533,38 @@ def test_load_task_rejects_solution_requirement_inside_block_comment(tmp_path):
     assert 'require_relative "solution"' in message
 
 
-def test_load_task_accepts_solution_requirement_after_non_heredoc_marker_text(tmp_path):
+@pytest.mark.parametrize(
+    ("task_id", "test_contents"),
+    [
+        (
+            "001_solution_require_after_string_marker_text",
+            'puts "<<~RUBY"\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_percent_literal_marker_text",
+            'puts %q(<<~RUBY)\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_backtick_marker_text",
+            'puts `<<~RUBY`\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_regex_marker_text",
+            'puts(/<<~RUBY/)\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_keyword_regex_marker_text",
+            'if /<<~RUBY/.match?("marker")\nend\nrequire_relative "solution"\n',
+        ),
+    ],
+)
+def test_load_task_accepts_solution_requirement_after_non_heredoc_marker_text(
+    tmp_path, task_id, test_contents
+):
     task_dir = write_task(
         tmp_path,
-        "001_solution_require_after_marker_text",
-        test='puts "<<~RUBY"\nrequire_relative "solution"\n',
+        task_id,
+        test=test_contents,
     )
 
     task = load_task(task_dir)
