@@ -227,6 +227,17 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
             start -= 1
         return "".join(masked[start + 1 : end])
 
+    def is_heredoc_label_quote(position: int) -> bool:
+        previous = previous_significant_index(position)
+        if previous is None:
+            return False
+        if masked[previous] in {"-", "~"}:
+            previous = previous_significant_index(previous)
+        if previous is None or masked[previous] != "<":
+            return False
+        previous = previous_significant_index(previous)
+        return previous is not None and masked[previous] == "<"
+
     while index < length:
         char = line[index]
 
@@ -234,6 +245,22 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
             break
 
         if char in {"'", '"', "`"}:
+            if is_heredoc_label_quote(index):
+                delimiter = char
+                end = index + 1
+                escape = False
+                while end < length:
+                    current = line[end]
+                    if escape:
+                        escape = False
+                    elif current == "\\":
+                        escape = True
+                    elif current == delimiter:
+                        end += 1
+                        break
+                    end += 1
+                index = end
+                continue
             delimiter = char
             end = index + 1
             escape = False
@@ -421,25 +448,37 @@ def _heredoc_labels_for_line(line: str) -> list[str]:
         if candidate_index >= length:
             break
 
-        quote = line[candidate_index] if line[candidate_index] in {"'", '"'} else None
+        quote = line[candidate_index] if line[candidate_index] in {"'", '"', "`"} else None
         if quote is not None:
             candidate_index += 1
 
-        label_start = candidate_index
-        while candidate_index < length and (
-            line[candidate_index].isalnum() or line[candidate_index] == "_"
-        ):
-            candidate_index += 1
-        label = line[label_start:candidate_index]
-        if not label or not (label[0].isalpha() or label[0] == "_"):
-            index += 1
-            continue
-
         if quote is not None:
-            if candidate_index >= length or line[candidate_index] != quote:
+            label_start = candidate_index
+            escape = False
+            while candidate_index < length:
+                current = line[candidate_index]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif current == quote:
+                    break
+                candidate_index += 1
+            label = line[label_start:candidate_index]
+            if not label or candidate_index >= length or line[candidate_index] != quote:
                 index += 1
                 continue
             candidate_index += 1
+        else:
+            label_start = candidate_index
+            while candidate_index < length and (
+                line[candidate_index].isalnum() or line[candidate_index] == "_"
+            ):
+                candidate_index += 1
+            label = line[label_start:candidate_index]
+            if not label or not (label[0].isalpha() or label[0] == "_"):
+                index += 1
+                continue
 
         labels.append(label)
         index = candidate_index

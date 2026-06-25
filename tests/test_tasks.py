@@ -517,6 +517,56 @@ def test_load_task_rejects_solution_requirement_inside_heredoc_only(tmp_path):
     assert 'require_relative "solution"' in message
 
 
+@pytest.mark.parametrize(
+    ("task_id", "test_contents"),
+    [
+        (
+            "001_solution_require_in_single_quoted_heredoc",
+            (
+                'require "minitest/autorun"\n'
+                "snippet = <<~'RUBY'\n"
+                '  require_relative "solution"\n'
+                "RUBY\n"
+            ),
+        ),
+        (
+            "001_solution_require_in_double_quoted_heredoc",
+            (
+                'require "minitest/autorun"\n'
+                'snippet = <<~"RUBY TEXT"\n'
+                '  require_relative "solution"\n'
+                "RUBY TEXT\n"
+            ),
+        ),
+        (
+            "001_solution_require_in_backtick_quoted_heredoc",
+            (
+                'require "minitest/autorun"\n'
+                "snippet = <<-`RUBY-TEXT`\n"
+                '  require_relative "solution"\n'
+                "RUBY-TEXT\n"
+            ),
+        ),
+    ],
+)
+def test_load_task_rejects_solution_requirement_inside_quoted_heredoc(
+    tmp_path, task_id, test_contents
+):
+    task_dir = write_task(
+        tmp_path,
+        task_id,
+        test=test_contents,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert task_id in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
 def test_load_task_rejects_solution_requirement_inside_block_comment(tmp_path):
     task_dir = write_task(
         tmp_path,
