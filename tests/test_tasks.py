@@ -560,6 +560,14 @@ def test_load_task_rejects_solution_requirement_inside_block_comment(tmp_path):
             "001_solution_require_after_keyword_regex_marker_text",
             'if /<<~RUBY/.match?("marker")\nend\nrequire_relative "solution"\n',
         ),
+        (
+            "001_solution_require_after_logical_and_regex_marker_text",
+            'if true && /abc<<~RUBY/.match?("abc")\nend\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_logical_or_regex_marker_text",
+            'if false || /abc<<~RUBY/.match?("abc")\nend\nrequire_relative "solution"\n',
+        ),
     ],
 )
 def test_load_task_accepts_solution_requirement_after_non_heredoc_marker_text(

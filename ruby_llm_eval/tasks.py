@@ -208,6 +208,12 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
             return None
         return masked[previous]
 
+    def previous_significant_index(position: int) -> int | None:
+        previous = position - 1
+        while previous >= 0 and masked[previous].isspace():
+            previous -= 1
+        return previous if previous >= 0 else None
+
     def previous_significant_word(position: int) -> str | None:
         previous = position - 1
         while previous >= 0 and masked[previous].isspace():
@@ -288,8 +294,16 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
             continue
 
         previous_word = previous_significant_word(index)
+        previous_char = previous_significant_character(index)
+        previous_index = previous_significant_index(index)
+        previous_is_logical_operator = (
+            previous_char in {"&", "|"}
+            and previous_index is not None
+            and previous_index > 0
+            and masked[previous_index - 1] == previous_char
+        )
         if char == "/" and (
-            previous_significant_character(index)
+            previous_char
             in {
                 None,
                 "(",
@@ -301,6 +315,7 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
                 "?",
                 "!",
             }
+            or previous_is_logical_operator
             or previous_word in {"if", "unless", "while", "until", "when", "case", "return"}
         ):
             end = index + 1
