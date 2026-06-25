@@ -53,6 +53,15 @@ class Task:
         return (self.path / REFERENCE_FILE).read_text(encoding="utf-8")
 
 
+@dataclass(frozen=True)
+class _LiteralMaskState:
+    kind: str
+    delimiter: str
+    closing_delimiter: str
+    depth: int = 0
+    escape: bool = False
+
+
 def _read_required(task_dir: Path, filename: str) -> str:
     try:
         return (task_dir / filename).read_text(encoding="utf-8")
@@ -191,7 +200,9 @@ def _matching_delimiter(delimiter: str) -> str:
     return {"(": ")", "[": "]", "{": "}", "<": ">"}.get(delimiter, delimiter)
 
 
-def _mask_same_line_non_heredoc_literals(line: str) -> str:
+def _mask_non_heredoc_literals(
+    line: str, state: _LiteralMaskState | None = None
+) -> tuple[str, _LiteralMaskState | None]:
     masked = list(line)
     index = 0
     length = len(masked)
@@ -238,6 +249,50 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
         previous = previous_significant_index(previous)
         return previous is not None and masked[previous] == "<"
 
+    def consume_existing_state(
+        active_state: _LiteralMaskState,
+    ) -> tuple[int, _LiteralMaskState | None]:
+        active_escape = active_state.escape
+        active_depth = active_state.depth
+        current_index = 0
+
+        while current_index < length:
+            current = line[current_index]
+            mask_range(current_index, current_index + 1)
+            if active_escape:
+                active_escape = False
+            elif current == "\\":
+                active_escape = True
+            elif active_state.kind == "quote":
+                if current == active_state.delimiter:
+                    return current_index + 1, None
+            elif active_state.closing_delimiter == active_state.delimiter:
+                if current == active_state.closing_delimiter:
+                    return current_index + 1, None
+            elif current == active_state.delimiter:
+                active_depth += 1
+            elif current == active_state.closing_delimiter:
+                active_depth -= 1
+                if active_depth == 0:
+                    return current_index + 1, None
+            current_index += 1
+
+        return (
+            current_index,
+            _LiteralMaskState(
+                kind=active_state.kind,
+                delimiter=active_state.delimiter,
+                closing_delimiter=active_state.closing_delimiter,
+                depth=active_depth,
+                escape=active_escape,
+            ),
+        )
+
+    if state is not None:
+        index, state = consume_existing_state(state)
+        if state is not None:
+            return "".join(masked), state
+
     while index < length:
         char = line[index]
 
@@ -264,6 +319,7 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
             delimiter = char
             end = index + 1
             escape = False
+            found_end = False
             while end < length:
                 current = line[end]
                 if escape:
@@ -272,8 +328,20 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
                     escape = True
                 elif current == delimiter:
                     end += 1
+                    found_end = True
                     break
                 end += 1
+            if not found_end:
+                mask_range(index, length)
+                return (
+                    "".join(masked),
+                    _LiteralMaskState(
+                        kind="quote",
+                        delimiter=delimiter,
+                        closing_delimiter=delimiter,
+                        escape=escape,
+                    ),
+                )
             mask_range(index, end)
             index = end
             continue
@@ -299,6 +367,7 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
             end = next_index + 1
             depth = 1 if closing_delimiter != delimiter else 0
             escape = False
+            found_end = False
             while end < length:
                 current = line[end]
                 if escape:
@@ -310,12 +379,26 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
                 elif current == closing_delimiter:
                     if closing_delimiter == delimiter:
                         end += 1
+                        found_end = True
                         break
                     depth -= 1
                     if depth == 0:
                         end += 1
+                        found_end = True
                         break
                 end += 1
+            if not found_end:
+                mask_range(index, length)
+                return (
+                    "".join(masked),
+                    _LiteralMaskState(
+                        kind="percent",
+                        delimiter=delimiter,
+                        closing_delimiter=closing_delimiter,
+                        depth=depth,
+                        escape=escape,
+                    ),
+                )
             mask_range(index, end)
             index = end
             continue
@@ -370,7 +453,11 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
 
         index += 1
 
-    return "".join(masked)
+    return "".join(masked), None
+
+
+def _mask_same_line_non_heredoc_literals(line: str) -> str:
+    return _mask_non_heredoc_literals(line)[0]
 
 
 def _heredoc_labels_for_line(line: str) -> list[str]:
@@ -489,6 +576,7 @@ def _heredoc_labels_for_line(line: str) -> list[str]:
 def _test_requires_solution(test_contents: str) -> bool:
     heredoc_labels: list[str] = []
     in_block_comment = False
+    literal_state: _LiteralMaskState | None = None
 
     for line in test_contents.splitlines():
         if in_block_comment:
@@ -503,16 +591,18 @@ def _test_requires_solution(test_contents: str) -> bool:
         if line == "__END__":
             return False
 
-        stripped = line.strip()
+        line_started_inside_literal = literal_state is not None
+        masked_line, literal_state = _mask_non_heredoc_literals(line, literal_state)
+        stripped = masked_line.strip()
         if heredoc_labels:
             if stripped == heredoc_labels[0]:
                 heredoc_labels.pop(0)
             continue
 
-        if SOLUTION_REQUIREMENT_PATTERN.fullmatch(line):
+        if not line_started_inside_literal and SOLUTION_REQUIREMENT_PATTERN.fullmatch(line):
             return True
 
-        heredoc_labels = _heredoc_labels_for_line(line)
+        heredoc_labels = _heredoc_labels_for_line(masked_line)
 
     return False
 
