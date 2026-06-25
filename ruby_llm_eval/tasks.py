@@ -377,6 +377,29 @@ def _heredoc_labels_for_line(line: str) -> list[str]:
             index += 1
             continue
 
+        if index > 0 and line[index - 1] == "/":
+            end = index + 2
+            escape = False
+            in_character_class = False
+            while end < length:
+                current = line[end]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif current == "[":
+                    in_character_class = True
+                elif current == "]" and in_character_class:
+                    in_character_class = False
+                elif current == "/" and not in_character_class:
+                    index += 1
+                    break
+                end += 1
+            else:
+                end = None
+            if end is not None:
+                continue
+
         candidate_index = index + 2
         if candidate_index < length and line[candidate_index] in {"-", "~"}:
             candidate_index += 1

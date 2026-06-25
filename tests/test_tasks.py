@@ -553,6 +553,10 @@ def test_load_task_rejects_solution_requirement_inside_block_comment(tmp_path):
             'puts(/<<~RUBY/)\nrequire_relative "solution"\n',
         ),
         (
+            "001_solution_require_after_command_form_regex_marker_text",
+            'puts /<<~RUBY/\nrequire_relative "solution"\n',
+        ),
+        (
             "001_solution_require_after_keyword_regex_marker_text",
             'if /<<~RUBY/.match?("marker")\nend\nrequire_relative "solution"\n',
         ),
@@ -585,6 +589,38 @@ def test_load_task_rejects_solution_requirement_inside_expression_heredoc(tmp_pa
 
     message = str(exc_info.value)
     assert "001_solution_require_in_expression_heredoc" in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+def test_load_task_rejects_solution_requirement_inside_slash_adjacent_heredoc(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_slash_adjacent_heredoc",
+        test='value = 1 / <<~RUBY\nrequire_relative "solution"\nRUBY\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_solution_require_in_slash_adjacent_heredoc" in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+def test_load_task_rejects_solution_requirement_inside_tight_slash_adjacent_heredoc(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_tight_slash_adjacent_heredoc",
+        test='value = 1/<<~RUBY\nrequire_relative "solution"\nRUBY\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_solution_require_in_tight_slash_adjacent_heredoc" in message
     assert MINITEST_FILE in message
     assert 'require_relative "solution"' in message
 
