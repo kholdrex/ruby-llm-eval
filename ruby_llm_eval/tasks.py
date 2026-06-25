@@ -31,7 +31,8 @@ SUPPORTED_META_KEYS = {"category"}
 # Map each supported framework to the test filename that selects it.
 TEST_FILES = {"minitest": "test.rb", "rspec": "spec.rb"}
 SOLUTION_REQUIREMENT_PATTERN = re.compile(
-    r'^\s*require_relative\s+["\']solution["\']\s*$', re.MULTILINE
+    r'^\s*require_relative(?:\s+|\s*\()\s*["\']solution["\']\s*\)?\s*(?:#.*)?$',
+    re.MULTILINE,
 )
 
 
@@ -198,7 +199,11 @@ def _heredoc_labels_for_line(line: str) -> list[str]:
         char = line[index]
 
         if in_single_quote:
-            if char == "'":
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == "'":
                 in_single_quote = False
             index += 1
             continue

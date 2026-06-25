@@ -464,6 +464,41 @@ def test_load_task_accepts_solution_requirement_with_single_quotes_and_indentati
     assert "require_relative 'solution'" in task.test
 
 
+@pytest.mark.parametrize(
+    "test_contents",
+    [
+        'require "minitest/autorun"\nrequire_relative "solution" # load benchmark implementation\n',
+        'require "minitest/autorun"\nrequire_relative("solution")\n',
+        'require "minitest/autorun"\n'
+        'require_relative( "solution" ) # load benchmark implementation\n',
+    ],
+)
+def test_load_task_accepts_executable_solution_requirement_variants(tmp_path, test_contents):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_variant",
+        test=test_contents,
+    )
+
+    task = load_task(task_dir)
+
+    assert task.framework == "minitest"
+    assert task.test == test_contents
+
+
+def test_load_task_accepts_solution_requirement_after_escaped_single_quote_marker_text(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_after_escaped_single_quote_marker_text",
+        test="puts 'it\\'s <<~RUBY'\nrequire_relative \"solution\"\n",
+    )
+
+    task = load_task(task_dir)
+
+    assert task.framework == "minitest"
+    assert 'require_relative "solution"' in task.test
+
+
 def test_load_task_rejects_solution_requirement_inside_heredoc_only(tmp_path):
     task_dir = write_task(
         tmp_path,
