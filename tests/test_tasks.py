@@ -571,6 +571,49 @@ def test_load_task_rejects_solution_requirement_inside_quoted_heredoc(
     ("task_id", "test_contents"),
     [
         (
+            "001_solution_require_after_indented_plain_heredoc_terminator",
+            (
+                'require "minitest/autorun"\n'
+                "snippet = <<RUBY\n"
+                "  RUBY\n"
+                'require_relative "solution"\n'
+                "RUBY\n"
+            ),
+        ),
+        (
+            "001_solution_require_after_indented_plain_quoted_heredoc_terminator",
+            (
+                'require "minitest/autorun"\n'
+                'snippet = <<"RUBY TEXT"\n'
+                "  RUBY TEXT\n"
+                'require_relative "solution"\n'
+                "RUBY TEXT\n"
+            ),
+        ),
+    ],
+)
+def test_load_task_rejects_solution_requirement_after_indented_plain_heredoc_terminator(
+    tmp_path, task_id, test_contents
+):
+    task_dir = write_task(
+        tmp_path,
+        task_id,
+        test=test_contents,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert task_id in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+@pytest.mark.parametrize(
+    ("task_id", "test_contents"),
+    [
+        (
             "001_solution_require_in_multiline_double_quoted_string",
             ('require "minitest/autorun"\nsnippet = "\nrequire_relative "solution"\n"\n'),
         ),
