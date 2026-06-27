@@ -14,6 +14,7 @@ registry to edit.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,10 @@ SUPPORTED_META_KEYS = {"category"}
 
 # Map each supported framework to the test filename that selects it.
 TEST_FILES = {"minitest": "test.rb", "rspec": "spec.rb"}
+SOLUTION_REQUIREMENT_PATTERN = re.compile(
+    r'^\s*require_relative(?:\s+|\s*\()\s*["\']solution["\']\s*\)?\s*(?:#.*)?$',
+    re.MULTILINE,
+)
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,15 @@ class Task:
     def reference(self) -> str:
         """Read the reference solution. Used to self-test tasks and the stub."""
         return (self.path / REFERENCE_FILE).read_text(encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class _LiteralMaskState:
+    kind: str
+    delimiter: str
+    closing_delimiter: str
+    depth: int = 0
+    escape: bool = False
 
 
 def _read_required(task_dir: Path, filename: str) -> str:
@@ -182,6 +196,431 @@ def _collect_task_file_errors(task_dir: Path) -> tuple[list[str], str | None, st
     return issues, framework, test_filename
 
 
+def _matching_delimiter(delimiter: str) -> str:
+    return {"(": ")", "[": "]", "{": "}", "<": ">"}.get(delimiter, delimiter)
+
+
+def _mask_non_heredoc_literals(
+    line: str, state: _LiteralMaskState | None = None
+) -> tuple[str, _LiteralMaskState | None]:
+    masked = list(line)
+    index = 0
+    length = len(masked)
+
+    def mask_range(start: int, end: int) -> None:
+        for position in range(start, min(end, length)):
+            masked[position] = " "
+
+    def previous_significant_character(position: int) -> str | None:
+        previous = position - 1
+        while previous >= 0 and masked[previous].isspace():
+            previous -= 1
+        if previous < 0:
+            return None
+        return masked[previous]
+
+    def previous_significant_index(position: int) -> int | None:
+        previous = position - 1
+        while previous >= 0 and masked[previous].isspace():
+            previous -= 1
+        return previous if previous >= 0 else None
+
+    def previous_significant_word(position: int) -> str | None:
+        previous = position - 1
+        while previous >= 0 and masked[previous].isspace():
+            previous -= 1
+        if previous < 0 or not masked[previous].isalpha():
+            return None
+
+        end = previous + 1
+        start = previous
+        while start >= 0 and masked[start].isalpha():
+            start -= 1
+        return "".join(masked[start + 1 : end])
+
+    def is_heredoc_label_quote(position: int) -> bool:
+        previous = previous_significant_index(position)
+        if previous is None:
+            return False
+        if masked[previous] in {"-", "~"}:
+            previous = previous_significant_index(previous)
+        if previous is None or masked[previous] != "<":
+            return False
+        previous = previous_significant_index(previous)
+        return previous is not None and masked[previous] == "<"
+
+    def consume_existing_state(
+        active_state: _LiteralMaskState,
+    ) -> tuple[int, _LiteralMaskState | None]:
+        active_escape = active_state.escape
+        active_depth = active_state.depth
+        current_index = 0
+
+        while current_index < length:
+            current = line[current_index]
+            mask_range(current_index, current_index + 1)
+            if active_escape:
+                active_escape = False
+            elif current == "\\":
+                active_escape = True
+            elif active_state.kind == "quote":
+                if current == active_state.delimiter:
+                    return current_index + 1, None
+            elif active_state.closing_delimiter == active_state.delimiter:
+                if current == active_state.closing_delimiter:
+                    return current_index + 1, None
+            elif current == active_state.delimiter:
+                active_depth += 1
+            elif current == active_state.closing_delimiter:
+                active_depth -= 1
+                if active_depth == 0:
+                    return current_index + 1, None
+            current_index += 1
+
+        return (
+            current_index,
+            _LiteralMaskState(
+                kind=active_state.kind,
+                delimiter=active_state.delimiter,
+                closing_delimiter=active_state.closing_delimiter,
+                depth=active_depth,
+                escape=active_escape,
+            ),
+        )
+
+    if state is not None:
+        index, state = consume_existing_state(state)
+        if state is not None:
+            return "".join(masked), state
+
+    while index < length:
+        char = line[index]
+
+        if char == "#":
+            break
+
+        if char in {"'", '"', "`"}:
+            if is_heredoc_label_quote(index):
+                delimiter = char
+                end = index + 1
+                escape = False
+                while end < length:
+                    current = line[end]
+                    if escape:
+                        escape = False
+                    elif current == "\\":
+                        escape = True
+                    elif current == delimiter:
+                        end += 1
+                        break
+                    end += 1
+                index = end
+                continue
+            delimiter = char
+            end = index + 1
+            escape = False
+            found_end = False
+            while end < length:
+                current = line[end]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif current == delimiter:
+                    end += 1
+                    found_end = True
+                    break
+                end += 1
+            if not found_end:
+                mask_range(index, length)
+                return (
+                    "".join(masked),
+                    _LiteralMaskState(
+                        kind="quote",
+                        delimiter=delimiter,
+                        closing_delimiter=delimiter,
+                        escape=escape,
+                    ),
+                )
+            mask_range(index, end)
+            index = end
+            continue
+
+        if char == "%":
+            next_index = index + 1
+            if next_index >= length:
+                index += 1
+                continue
+
+            if line[next_index].isalnum():
+                next_index += 1
+            if next_index >= length:
+                index += 1
+                continue
+
+            delimiter = line[next_index]
+            closing_delimiter = _matching_delimiter(delimiter)
+            if delimiter.isalnum() or delimiter.isspace():
+                index += 1
+                continue
+
+            end = next_index + 1
+            depth = 1 if closing_delimiter != delimiter else 0
+            escape = False
+            found_end = False
+            while end < length:
+                current = line[end]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif closing_delimiter != delimiter and current == delimiter:
+                    depth += 1
+                elif current == closing_delimiter:
+                    if closing_delimiter == delimiter:
+                        end += 1
+                        found_end = True
+                        break
+                    depth -= 1
+                    if depth == 0:
+                        end += 1
+                        found_end = True
+                        break
+                end += 1
+            if not found_end:
+                mask_range(index, length)
+                return (
+                    "".join(masked),
+                    _LiteralMaskState(
+                        kind="percent",
+                        delimiter=delimiter,
+                        closing_delimiter=closing_delimiter,
+                        depth=depth,
+                        escape=escape,
+                    ),
+                )
+            mask_range(index, end)
+            index = end
+            continue
+
+        previous_word = previous_significant_word(index)
+        previous_char = previous_significant_character(index)
+        previous_index = previous_significant_index(index)
+        previous_is_logical_operator = (
+            previous_char in {"&", "|"}
+            and previous_index is not None
+            and previous_index > 0
+            and masked[previous_index - 1] == previous_char
+        )
+        if char == "/" and (
+            previous_char
+            in {
+                None,
+                "(",
+                "=",
+                ",",
+                "[",
+                "{",
+                ":",
+                "?",
+                "!",
+            }
+            or previous_is_logical_operator
+            or previous_word in {"if", "unless", "while", "until", "when", "case", "return"}
+        ):
+            end = index + 1
+            escape = False
+            in_character_class = False
+            while end < length:
+                current = line[end]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif current == "[":
+                    in_character_class = True
+                elif current == "]" and in_character_class:
+                    in_character_class = False
+                elif current == "/" and not in_character_class:
+                    end += 1
+                    break
+                end += 1
+            while end < length and line[end].isalpha():
+                end += 1
+            mask_range(index, end)
+            index = end
+            continue
+
+        index += 1
+
+    return "".join(masked), None
+
+
+def _mask_same_line_non_heredoc_literals(line: str) -> str:
+    return _mask_non_heredoc_literals(line)[0]
+
+
+def _heredoc_labels_for_line(line: str) -> list[tuple[str, bool]]:
+    line = _mask_same_line_non_heredoc_literals(line)
+    labels: list[tuple[str, bool]] = []
+    in_single_quote = False
+    in_double_quote = False
+    escape = False
+    index = 0
+    length = len(line)
+
+    while index < length:
+        char = line[index]
+
+        if in_single_quote:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == "'":
+                in_single_quote = False
+            index += 1
+            continue
+
+        if in_double_quote:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_double_quote = False
+            index += 1
+            continue
+
+        if char == "#":
+            break
+        if char == "'":
+            in_single_quote = True
+            index += 1
+            continue
+        if char == '"':
+            in_double_quote = True
+            index += 1
+            continue
+        if line[index : index + 2] != "<<":
+            index += 1
+            continue
+
+        if index > 0 and line[index - 1] == "/":
+            end = index + 2
+            escape = False
+            in_character_class = False
+            while end < length:
+                current = line[end]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif current == "[":
+                    in_character_class = True
+                elif current == "]" and in_character_class:
+                    in_character_class = False
+                elif current == "/" and not in_character_class:
+                    index += 1
+                    break
+                end += 1
+            else:
+                end = None
+            if end is not None:
+                continue
+
+        candidate_index = index + 2
+        indent_terminator = False
+        if candidate_index < length and line[candidate_index] in {"-", "~"}:
+            indent_terminator = True
+            candidate_index += 1
+        if candidate_index >= length:
+            break
+
+        quote = line[candidate_index] if line[candidate_index] in {"'", '"', "`"} else None
+        if quote is not None:
+            candidate_index += 1
+
+        if quote is not None:
+            label_start = candidate_index
+            escape = False
+            while candidate_index < length:
+                current = line[candidate_index]
+                if escape:
+                    escape = False
+                elif current == "\\":
+                    escape = True
+                elif current == quote:
+                    break
+                candidate_index += 1
+            label = line[label_start:candidate_index]
+            if not label or candidate_index >= length or line[candidate_index] != quote:
+                index += 1
+                continue
+            candidate_index += 1
+        else:
+            label_start = candidate_index
+            while candidate_index < length and (
+                line[candidate_index].isalnum() or line[candidate_index] == "_"
+            ):
+                candidate_index += 1
+            label = line[label_start:candidate_index]
+            if not label or not (label[0].isalpha() or label[0] == "_"):
+                index += 1
+                continue
+
+        labels.append((label, indent_terminator))
+        index = candidate_index
+
+    return labels
+
+
+def _test_requires_solution(test_contents: str) -> bool:
+    heredoc_labels: list[tuple[str, bool]] = []
+    in_block_comment = False
+    literal_state: _LiteralMaskState | None = None
+
+    for line in test_contents.splitlines():
+        if in_block_comment:
+            if line == "=end":
+                in_block_comment = False
+            continue
+
+        if line == "=begin":
+            in_block_comment = True
+            continue
+
+        if line == "__END__":
+            return False
+
+        line_started_inside_literal = literal_state is not None
+        masked_line, literal_state = _mask_non_heredoc_literals(line, literal_state)
+        stripped = masked_line.strip()
+        if heredoc_labels:
+            label, indent_terminator = heredoc_labels[0]
+            terminator = stripped if indent_terminator else masked_line
+            if terminator == label:
+                heredoc_labels.pop(0)
+            continue
+
+        if not line_started_inside_literal and SOLUTION_REQUIREMENT_PATTERN.fullmatch(line):
+            return True
+
+        heredoc_labels = _heredoc_labels_for_line(masked_line)
+
+    return False
+
+
+def _validate_test_contents(task_dir: Path, test_filename: str, test_contents: str) -> None:
+    if _test_requires_solution(test_contents):
+        return
+
+    raise ValueError(
+        f"Task '{task_dir.name}' file {test_filename} must include a standalone "
+        'require_relative "solution" line so benchmark tests execute solution.rb.'
+    )
+
+
 def load_task(task_dir: Path) -> Task:
     """Load a task directory, validating required files exist and are non-empty."""
     _validate_task_directory_id(task_dir)
@@ -198,6 +637,8 @@ def load_task(task_dir: Path) -> Task:
     empty = [name for name, content in contents.items() if not content.strip()]
     if empty:
         raise ValueError(f"Task '{task_dir.name}' has empty required file(s): {', '.join(empty)}")
+
+    _validate_test_contents(task_dir, test_filename, contents[test_filename])
 
     return Task(
         id=task_dir.name,
