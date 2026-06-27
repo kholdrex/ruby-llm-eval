@@ -423,6 +423,380 @@ def test_load_task_rejects_blank_required_files(tmp_path, filename, overrides):
     assert "empty required file" in message
 
 
+@pytest.mark.parametrize(
+    ("task_id", "test_filename", "test_contents"),
+    [
+        ("001_missing_solution_require", MINITEST_FILE, 'require "minitest/autorun"\n'),
+        (
+            "001_missing_solution_require_rspec",
+            TEST_FILES["rspec"],
+            'RSpec.describe "task" do\n  it("works") { expect(true).to eq(true) }\nend\n',
+        ),
+    ],
+)
+def test_load_task_rejects_test_file_without_solution_requirement(
+    tmp_path, task_id, test_filename, test_contents
+):
+    task_dir = write_task(tmp_path, task_id)
+    (task_dir / MINITEST_FILE).unlink()
+    (task_dir / test_filename).write_text(test_contents, encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert task_id in message
+    assert test_filename in message
+    assert 'require_relative "solution"' in message
+    assert "solution.rb" in message
+
+
+def test_load_task_accepts_solution_requirement_with_single_quotes_and_indentation(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_single_quote_solution_require",
+        test="require \"minitest/autorun\"\n  require_relative 'solution'\n",
+    )
+
+    task = load_task(task_dir)
+
+    assert task.framework == "minitest"
+    assert "require_relative 'solution'" in task.test
+
+
+@pytest.mark.parametrize(
+    "test_contents",
+    [
+        'require "minitest/autorun"\nrequire_relative "solution" # load benchmark implementation\n',
+        'require "minitest/autorun"\nrequire_relative("solution")\n',
+        'require "minitest/autorun"\n'
+        'require_relative( "solution" ) # load benchmark implementation\n',
+    ],
+)
+def test_load_task_accepts_executable_solution_requirement_variants(tmp_path, test_contents):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_variant",
+        test=test_contents,
+    )
+
+    task = load_task(task_dir)
+
+    assert task.framework == "minitest"
+    assert task.test == test_contents
+
+
+def test_load_task_accepts_solution_requirement_after_escaped_single_quote_marker_text(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_after_escaped_single_quote_marker_text",
+        test="puts 'it\\'s <<~RUBY'\nrequire_relative \"solution\"\n",
+    )
+
+    task = load_task(task_dir)
+
+    assert task.framework == "minitest"
+    assert 'require_relative "solution"' in task.test
+
+
+def test_load_task_rejects_solution_requirement_inside_heredoc_only(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_heredoc",
+        test=(
+            'require "minitest/autorun"\nsnippet = <<~RUBY\n  require_relative "solution"\nRUBY\n'
+        ),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_solution_require_in_heredoc" in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+@pytest.mark.parametrize(
+    ("task_id", "test_contents"),
+    [
+        (
+            "001_solution_require_in_single_quoted_heredoc",
+            (
+                'require "minitest/autorun"\n'
+                "snippet = <<~'RUBY'\n"
+                '  require_relative "solution"\n'
+                "RUBY\n"
+            ),
+        ),
+        (
+            "001_solution_require_in_double_quoted_heredoc",
+            (
+                'require "minitest/autorun"\n'
+                'snippet = <<~"RUBY TEXT"\n'
+                '  require_relative "solution"\n'
+                "RUBY TEXT\n"
+            ),
+        ),
+        (
+            "001_solution_require_in_backtick_quoted_heredoc",
+            (
+                'require "minitest/autorun"\n'
+                "snippet = <<-`RUBY-TEXT`\n"
+                '  require_relative "solution"\n'
+                "RUBY-TEXT\n"
+            ),
+        ),
+    ],
+)
+def test_load_task_rejects_solution_requirement_inside_quoted_heredoc(
+    tmp_path, task_id, test_contents
+):
+    task_dir = write_task(
+        tmp_path,
+        task_id,
+        test=test_contents,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert task_id in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+@pytest.mark.parametrize(
+    ("task_id", "test_contents"),
+    [
+        (
+            "001_solution_require_after_indented_plain_heredoc_terminator",
+            (
+                'require "minitest/autorun"\n'
+                "snippet = <<RUBY\n"
+                "  RUBY\n"
+                'require_relative "solution"\n'
+                "RUBY\n"
+            ),
+        ),
+        (
+            "001_solution_require_after_indented_plain_quoted_heredoc_terminator",
+            (
+                'require "minitest/autorun"\n'
+                'snippet = <<"RUBY TEXT"\n'
+                "  RUBY TEXT\n"
+                'require_relative "solution"\n'
+                "RUBY TEXT\n"
+            ),
+        ),
+    ],
+)
+def test_load_task_rejects_solution_requirement_after_indented_plain_heredoc_terminator(
+    tmp_path, task_id, test_contents
+):
+    task_dir = write_task(
+        tmp_path,
+        task_id,
+        test=test_contents,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert task_id in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+@pytest.mark.parametrize(
+    ("task_id", "test_contents"),
+    [
+        (
+            "001_solution_require_in_multiline_double_quoted_string",
+            ('require "minitest/autorun"\nsnippet = "\nrequire_relative "solution"\n"\n'),
+        ),
+        (
+            "001_solution_require_in_multiline_single_quoted_string",
+            ('require "minitest/autorun"\nsnippet = \'\nrequire_relative "solution"\n\'\n'),
+        ),
+        (
+            "001_solution_require_in_multiline_backtick_string",
+            ('require "minitest/autorun"\nsnippet = `\nrequire_relative "solution"\n`\n'),
+        ),
+        (
+            "001_solution_require_in_multiline_percent_literal",
+            ('require "minitest/autorun"\nsnippet = %q(\nrequire_relative "solution"\n)\n'),
+        ),
+    ],
+)
+def test_load_task_rejects_solution_requirement_inside_multiline_literal(
+    tmp_path, task_id, test_contents
+):
+    task_dir = write_task(
+        tmp_path,
+        task_id,
+        test=test_contents,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert task_id in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+def test_load_task_rejects_solution_requirement_inside_block_comment(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_block_comment",
+        test='=begin\nrequire_relative "solution"\n=end\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_solution_require_in_block_comment" in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+@pytest.mark.parametrize(
+    ("task_id", "test_contents"),
+    [
+        (
+            "001_solution_require_after_string_marker_text",
+            'puts "<<~RUBY"\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_percent_literal_marker_text",
+            'puts %q(<<~RUBY)\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_backtick_marker_text",
+            'puts `<<~RUBY`\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_regex_marker_text",
+            'puts(/<<~RUBY/)\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_command_form_regex_marker_text",
+            'puts /<<~RUBY/\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_keyword_regex_marker_text",
+            'if /<<~RUBY/.match?("marker")\nend\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_logical_and_regex_marker_text",
+            'if true && /abc<<~RUBY/.match?("abc")\nend\nrequire_relative "solution"\n',
+        ),
+        (
+            "001_solution_require_after_logical_or_regex_marker_text",
+            'if false || /abc<<~RUBY/.match?("abc")\nend\nrequire_relative "solution"\n',
+        ),
+    ],
+)
+def test_load_task_accepts_solution_requirement_after_non_heredoc_marker_text(
+    tmp_path, task_id, test_contents
+):
+    task_dir = write_task(
+        tmp_path,
+        task_id,
+        test=test_contents,
+    )
+
+    task = load_task(task_dir)
+
+    assert task.framework == "minitest"
+    assert 'require_relative "solution"' in task.test
+
+
+def test_load_task_rejects_solution_requirement_inside_expression_heredoc(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_expression_heredoc",
+        test='puts(<<~RUBY)\nrequire_relative "solution"\nRUBY\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_solution_require_in_expression_heredoc" in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+def test_load_task_rejects_solution_requirement_inside_slash_adjacent_heredoc(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_slash_adjacent_heredoc",
+        test='value = 1 / <<~RUBY\nrequire_relative "solution"\nRUBY\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_solution_require_in_slash_adjacent_heredoc" in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+def test_load_task_rejects_solution_requirement_inside_tight_slash_adjacent_heredoc(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_tight_slash_adjacent_heredoc",
+        test='value = 1/<<~RUBY\nrequire_relative "solution"\nRUBY\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_solution_require_in_tight_slash_adjacent_heredoc" in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+def test_load_task_rejects_solution_requirement_after_ruby_end_data_marker(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_after_end_data",
+        test='require "minitest/autorun"\n__END__\nrequire_relative "solution"\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_solution_require_after_end_data" in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
+def test_load_task_rejects_solution_requirement_inside_second_parallel_heredoc(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_second_parallel_heredoc",
+        test='puts(<<~FIRST, <<~SECOND)\nignored\nFIRST\nrequire_relative "solution"\nSECOND\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_solution_require_in_second_parallel_heredoc" in message
+    assert MINITEST_FILE in message
+    assert 'require_relative "solution"' in message
+
+
 @pytest.mark.parametrize("filename", [PROMPT_FILE, MINITEST_FILE, REFERENCE_FILE])
 def test_load_task_rejects_required_files_with_invalid_utf8(tmp_path, filename):
     task_dir = write_task(tmp_path, "001_bad_encoding")
