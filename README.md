@@ -13,7 +13,7 @@ reports the fraction that pass. No GPU, no local model weights, no Bundler.
 
 ```text
 Model: claude-sonnet-4-6  (provider: anthropic)
-Tasks: 35 from tasks (v0.6.0)  N=5  k=1  temperature=0.2  timeout=10s
+Tasks: 36 from tasks (v0.7.0)  N=5  k=1  temperature=0.2  timeout=10s
 
   001_fizzbuzz                 pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
   002_palindrome               pass@1 100.0%  [✓ ✓ ✓ ✓ ✓]
