@@ -1034,7 +1034,7 @@ def test_harder_tasks_present():
 
 
 def test_version_is_recorded():
-    assert read_version(TASKS_DIR) == "0.7.0"
+    assert read_version(TASKS_DIR) == "0.8.0"
 
 
 def test_blank_version_defaults_to_unknown(tmp_path):
