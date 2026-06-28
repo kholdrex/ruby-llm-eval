@@ -32,21 +32,25 @@ class ProductsControllerTest < Minitest::Test
 
   def setup
     Product.delete_all
-    @widget = Product.create!(name: "Widget")
-    @gadget = Product.create!(name: "Gadget")
+    # Inserted out of alphabetical order, so insertion/id order differs from
+    # name order. A solution missing `order(:name)` returns insertion order
+    # and fails.
+    Product.create!(name: "Mango")
+    Product.create!(name: "Apple")
+    @zebra = Product.create!(name: "Zebra")
   end
 
-  def test_index_lists_all_products
+  def test_index_orders_by_name
     get "/products"
     assert_equal(200, last_response.status)
     names = JSON.parse(last_response.body).map { |product| product["name"] }
-    assert_equal(["Widget", "Gadget"], names)
+    assert_equal(["Apple", "Mango", "Zebra"], names)
   end
 
   def test_show_returns_one_product
-    get "/products/#{@gadget.id}"
+    get "/products/#{@zebra.id}"
     assert_equal(200, last_response.status)
-    assert_equal("Gadget", JSON.parse(last_response.body)["name"])
+    assert_equal("Zebra", JSON.parse(last_response.body)["name"])
   end
 
   def test_show_missing_returns_404

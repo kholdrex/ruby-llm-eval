@@ -13,7 +13,7 @@ get "/products/:id" => "products#show"
 
 Implement `ProductsController < ActionController::Base` with:
 
-- `index` — render **all products** as JSON, ordered by `id`.
+- `index` — render **all products** as JSON, ordered alphabetically **by name**.
 - `show` — find the product by `params[:id]` and render it as JSON. If no such
   product exists, render `{ "error": "not found" }` with HTTP status `404`.
 
