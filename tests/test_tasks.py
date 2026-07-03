@@ -471,6 +471,8 @@ def test_load_task_accepts_solution_requirement_with_single_quotes_and_indentati
         'require "minitest/autorun"\nrequire_relative("solution")\n',
         'require "minitest/autorun"\n'
         'require_relative( "solution" ) # load benchmark implementation\n',
+        'require "minitest/autorun"\nrequire_relative(\n  "solution"\n)\n',
+        'require "minitest/autorun"\nrequire_relative \\\n  "solution"\n',
     ],
 )
 def test_load_task_accepts_executable_solution_requirement_variants(tmp_path, test_contents):
@@ -484,6 +486,45 @@ def test_load_task_accepts_executable_solution_requirement_variants(tmp_path, te
 
     assert task.framework == "minitest"
     assert task.test == test_contents
+
+
+def test_load_task_rejects_solution_requirement_inside_comment_with_semicolon(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_comment_with_semicolon",
+        test='require "minitest/autorun"\n# x; require_relative "solution"\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    assert "001_solution_require_in_comment_with_semicolon" in str(exc_info.value)
+
+
+def test_load_task_rejects_solution_requirement_inside_inline_comment_with_semicolon(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_in_inline_comment_with_semicolon",
+        test='require "minitest/autorun"\nputs 1 # x; require_relative "solution"\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    assert "001_solution_require_in_inline_comment_with_semicolon" in str(exc_info.value)
+
+
+def test_load_task_rejects_solution_requirement_after_semicolon(tmp_path):
+    task_dir = write_task(
+        tmp_path,
+        "001_solution_require_after_semicolon",
+        test='require "minitest/autorun"\nputs 1; require_relative "solution"\n',
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    assert "001_solution_require_after_semicolon" in str(exc_info.value)
 
 
 def test_load_task_accepts_solution_requirement_after_escaped_single_quote_marker_text(tmp_path):
