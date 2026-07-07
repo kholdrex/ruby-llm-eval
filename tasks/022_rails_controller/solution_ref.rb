@@ -1,6 +1,6 @@
 class ProductsController < ActionController::Base
   def index
-    render json: Product.order(:id)
+    render json: Product.order(:name)
   end
 
   def show
