@@ -31,8 +31,14 @@ SUPPORTED_META_KEYS = {"category"}
 # Map each supported framework to the test filename that selects it.
 TEST_FILES = {"minitest": "test.rb", "rspec": "spec.rb"}
 SOLUTION_REQUIREMENT_PATTERN = re.compile(
-    r'^\s*require_relative(?:\s+|\s*\()\s*["\']solution["\']\s*\)?\s*(?:#.*)?$',
-    re.MULTILINE,
+    r"""
+    (?:^|[;\n])\s*require_relative(?:
+        [ \t\f\v]+["']solution["']
+        | [ \t\f\v]*\\\s*["']solution["']
+        | \s*\(\s*["']solution["']\s*\)
+    )\s*(?:\#.*)?(?=$|[;\n])
+    """,
+    re.MULTILINE | re.VERBOSE,
 )
 
 
@@ -577,6 +583,7 @@ def _test_requires_solution(test_contents: str) -> bool:
     heredoc_labels: list[str] = []
     in_block_comment = False
     literal_state: _LiteralMaskState | None = None
+    executable_segments: list[str] = []
 
     for line in test_contents.splitlines():
         if in_block_comment:
@@ -599,12 +606,12 @@ def _test_requires_solution(test_contents: str) -> bool:
                 heredoc_labels.pop(0)
             continue
 
-        if not line_started_inside_literal and SOLUTION_REQUIREMENT_PATTERN.fullmatch(line):
-            return True
+        if not line_started_inside_literal:
+            executable_segments.append(line)
 
         heredoc_labels = _heredoc_labels_for_line(masked_line)
 
-    return False
+    return SOLUTION_REQUIREMENT_PATTERN.search("\n".join(executable_segments)) is not None
 
 
 def _validate_test_contents(task_dir: Path, test_filename: str, test_contents: str) -> None:

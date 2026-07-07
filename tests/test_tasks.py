@@ -471,6 +471,8 @@ def test_load_task_accepts_solution_requirement_with_single_quotes_and_indentati
         'require "minitest/autorun"\nrequire_relative("solution")\n',
         'require "minitest/autorun"\n'
         'require_relative( "solution" ) # load benchmark implementation\n',
+        'require "minitest/autorun"\nrequire_relative(\n  "solution"\n)\n',
+        'require "minitest/autorun"\nrequire_relative \\\n  "solution"\n',
     ],
 )
 def test_load_task_accepts_executable_solution_requirement_variants(tmp_path, test_contents):
