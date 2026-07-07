@@ -32,11 +32,11 @@ SUPPORTED_META_KEYS = {"category"}
 TEST_FILES = {"minitest": "test.rb", "rspec": "spec.rb"}
 SOLUTION_REQUIREMENT_PATTERN = re.compile(
     r"""
-    (?:^|[;\n])\s*require_relative(?:
+    (?:^|\n)\s*require_relative(?:
         [ \t\f\v]+["']solution["']
         | [ \t\f\v]*\\\s*["']solution["']
         | \s*\(\s*["']solution["']\s*\)
-    )\s*(?:\#.*)?(?=$|[;\n])
+    )\s*(?:\#.*)?(?=$|\n)
     """,
     re.MULTILINE | re.VERBOSE,
 )
@@ -466,9 +466,9 @@ def _mask_same_line_non_heredoc_literals(line: str) -> str:
     return _mask_non_heredoc_literals(line)[0]
 
 
-def _heredoc_labels_for_line(line: str) -> list[str]:
+def _heredoc_labels_for_line(line: str) -> list[tuple[str, bool]]:
     line = _mask_same_line_non_heredoc_literals(line)
-    labels: list[str] = []
+    labels: list[tuple[str, bool]] = []
     in_single_quote = False
     in_double_quote = False
     escape = False
@@ -536,7 +536,9 @@ def _heredoc_labels_for_line(line: str) -> list[str]:
                 continue
 
         candidate_index = index + 2
+        indent_terminator = False
         if candidate_index < length and line[candidate_index] in {"-", "~"}:
+            indent_terminator = True
             candidate_index += 1
         if candidate_index >= length:
             break
@@ -573,14 +575,14 @@ def _heredoc_labels_for_line(line: str) -> list[str]:
                 index += 1
                 continue
 
-        labels.append(label)
+        labels.append((label, indent_terminator))
         index = candidate_index
 
     return labels
 
 
 def _test_requires_solution(test_contents: str) -> bool:
-    heredoc_labels: list[str] = []
+    heredoc_labels: list[tuple[str, bool]] = []
     in_block_comment = False
     literal_state: _LiteralMaskState | None = None
     executable_segments: list[str] = []
@@ -602,12 +604,16 @@ def _test_requires_solution(test_contents: str) -> bool:
         masked_line, literal_state = _mask_non_heredoc_literals(line, literal_state)
         stripped = masked_line.strip()
         if heredoc_labels:
-            if stripped == heredoc_labels[0]:
+            label, indent_terminator = heredoc_labels[0]
+            terminator = stripped if indent_terminator else masked_line
+            if terminator == label:
                 heredoc_labels.pop(0)
             continue
 
         if not line_started_inside_literal:
-            executable_segments.append(line)
+            comment_index = masked_line.find("#")
+            executable_line = line[:comment_index] if comment_index != -1 else line
+            executable_segments.append(executable_line)
 
         heredoc_labels = _heredoc_labels_for_line(masked_line)
 
