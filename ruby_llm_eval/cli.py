@@ -160,7 +160,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         _eprint(f"Building/locating sandbox image {IMAGE_TAG} ...")
-        ensure_image(find_sandbox_dir(args.sandbox))
+        ensure_image(find_sandbox_dir(args.sandbox, strict_explicit=True))
 
     out_root = Path(args.output)
     samples_dir = out_root / safe_model_dir(args.model)
@@ -354,7 +354,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         _doctor_line("tasks", False, str(exc))
 
     try:
-        sandbox_dir = find_sandbox_dir(args.sandbox)
+        sandbox_dir = find_sandbox_dir(args.sandbox, strict_explicit=True)
         _doctor_line("sandbox", True, str(sandbox_dir))
     except FileNotFoundError as exc:
         overall_ok = False

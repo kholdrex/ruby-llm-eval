@@ -73,9 +73,9 @@ def find_config_dir(explicit: str | None = None) -> Path:
     )
 
 
-def find_sandbox_dir(explicit: str | None = None) -> Path:
+def find_sandbox_dir(explicit: str | None = None, *, strict_explicit: bool = False) -> Path:
     """Return the directory holding the sandbox Dockerfile."""
-    return _find_dir_containing("sandbox", "Dockerfile", explicit)
+    return _find_dir_containing("sandbox", "Dockerfile", explicit, strict_explicit=strict_explicit)
 
 
 def find_tasks_dir(explicit: str | None = None) -> Path:
