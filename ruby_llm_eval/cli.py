@@ -328,7 +328,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     providers = {}
 
     try:
-        config_dir = find_config_dir(args.config_dir)
+        config_dir = find_config_dir(args.config_dir, strict_explicit=True)
         _doctor_line("config", True, str(config_dir))
     except (FileNotFoundError, ValueError) as exc:
         config_dir = None

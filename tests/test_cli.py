@@ -192,6 +192,20 @@ def test_doctor_fails_when_explicit_sandbox_path_is_missing(tmp_path, monkeypatc
     assert "[FAIL] sandbox: Explicit sandbox path does not exist:" in out
 
 
+def test_doctor_fails_when_explicit_config_path_is_missing(tmp_path, monkeypatch, capsys):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "_docker_readiness", lambda: (True, "Docker daemon reachable"))
+    monkeypatch.setattr(cli, "image_exists", lambda image=cli.IMAGE_TAG: True)
+
+    missing_config = tmp_path / "missing-config"
+    rc = main(["doctor", "--config-dir", str(missing_config)])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert f"[FAIL] config: Explicit configs path does not exist: {missing_config}" in out
+
+
 def test_doctor_fails_when_explicit_sandbox_path_has_no_dockerfile(tmp_path, monkeypatch, capsys):
     tasks_dir = tmp_path / "tasks"
     write_private_task(tasks_dir, "001_private_add", "add")
