@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -25,6 +27,7 @@ from .evaluate import (
     SampleResult,
     docker_available,
     ensure_image,
+    image_exists,
     run_rubocop,
     run_sample,
 )
@@ -35,6 +38,7 @@ from .tasks import discover_tasks, read_version
 
 # ANSI status glyphs (degrade gracefully — they are just decoration).
 _GLYPH = {"passed": "✓", "failed": "✗", "timeout": "⏱", "error": "!"}
+DOCKER_INFO_TIMEOUT_SECONDS = 5
 
 
 def _eprint(*args: object) -> None:
@@ -157,7 +161,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         _eprint(f"Building/locating sandbox image {IMAGE_TAG} ...")
-        ensure_image(find_sandbox_dir(args.sandbox))
+        ensure_image(find_sandbox_dir(args.sandbox, strict_explicit=True))
 
     out_root = Path(args.output)
     samples_dir = out_root / safe_model_dir(args.model)
@@ -275,6 +279,133 @@ def cmd_list_tasks(args: argparse.Namespace) -> int:
     return 0
 
 
+def _doctor_line(label: str, ok: bool, detail: str) -> None:
+    status = "OK" if ok else "FAIL"
+    print(f"[{status}] {label}: {detail}")
+
+
+def _docker_readiness() -> tuple[bool, str]:
+    docker_path = shutil.which("docker")
+    if not docker_path:
+        return False, "docker not found on PATH"
+
+    try:
+        proc = subprocess.run(
+            [docker_path, "info"],
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_INFO_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"docker info timed out after {DOCKER_INFO_TIMEOUT_SECONDS} seconds"
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        message = detail[0] if detail else "docker daemon is not ready"
+        return False, message
+
+    return True, docker_path
+
+
+def _validate_pricing(pricing: dict) -> tuple[bool, str]:
+    for model, entry in pricing.items():
+        if not isinstance(entry, dict):
+            return False, f"model '{model}' must map to an object with input/output prices"
+
+        missing = [key for key in ("input", "output") if key not in entry]
+        if missing:
+            return False, f"model '{model}' is missing {', '.join(missing)} price(s)"
+
+        for key in ("input", "output"):
+            value = entry[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return False, f"model '{model}' has non-numeric {key} price: {value!r}"
+
+    return True, f"{len(pricing)} priced model entries"
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    overall_ok = True
+    providers = {}
+
+    try:
+        config_dir = find_config_dir(args.config_dir, strict_explicit=True)
+        _doctor_line("config", True, str(config_dir))
+    except (FileNotFoundError, ValueError) as exc:
+        config_dir = None
+        overall_ok = False
+        _doctor_line("config", False, str(exc))
+
+    if config_dir is not None:
+        try:
+            providers = load_providers(config_dir)
+            provider_names = ", ".join(sorted(providers)) or "none"
+            _doctor_line("providers", True, f"{len(providers)} configured ({provider_names})")
+        except Exception as exc:
+            overall_ok = False
+            _doctor_line("providers", False, str(exc))
+
+        try:
+            pricing = load_pricing(config_dir)
+            pricing_ok, pricing_detail = _validate_pricing(pricing)
+            overall_ok = overall_ok and pricing_ok
+            _doctor_line("pricing", pricing_ok, pricing_detail)
+        except Exception as exc:
+            overall_ok = False
+            _doctor_line("pricing", False, str(exc))
+
+    try:
+        tasks_dir = find_tasks_dir(args.tasks, strict_explicit=True)
+        tasks = discover_tasks(tasks_dir)
+        version = read_version(tasks_dir)
+        _doctor_line("tasks", True, f"{tasks_dir} ({len(tasks)} tasks, v{version})")
+    except (FileNotFoundError, ValueError) as exc:
+        overall_ok = False
+        _doctor_line("tasks", False, str(exc))
+
+    try:
+        sandbox_dir = find_sandbox_dir(args.sandbox, strict_explicit=True)
+        _doctor_line("sandbox", True, str(sandbox_dir))
+    except (FileNotFoundError, ValueError) as exc:
+        overall_ok = False
+        _doctor_line("sandbox", False, str(exc))
+
+    docker_ok, docker_detail = _docker_readiness()
+    if docker_ok:
+        _doctor_line("docker", True, docker_detail)
+        image_ok = image_exists(IMAGE_TAG)
+        image_detail = (
+            f"{IMAGE_TAG} present" if image_ok else f"{IMAGE_TAG} missing (will build on first run)"
+        )
+        _doctor_line("sandbox image", True, image_detail)
+    else:
+        overall_ok = False
+        _doctor_line("docker", False, docker_detail)
+
+    if args.provider:
+        if args.provider == "stub":
+            _doctor_line("provider stub", True, "no API key required")
+        elif args.provider not in providers:
+            overall_ok = False
+            known = ", ".join(sorted(providers)) or "none"
+            _doctor_line("provider", False, f"unknown provider '{args.provider}' (known: {known})")
+        else:
+            spec = providers[args.provider]
+            api_key_env = spec.get("api_key_env")
+            if api_key_env:
+                env_ok = bool(args.api_key or os.environ.get(api_key_env))
+                detail = (
+                    f"API key available via --api-key/{api_key_env}"
+                    if env_ok
+                    else f"set {api_key_env} or pass --api-key"
+                )
+                overall_ok = overall_ok and env_ok
+                _doctor_line(f"provider {args.provider}", env_ok, detail)
+            else:
+                _doctor_line(f"provider {args.provider}", True, "configured")
+
+    return 0 if overall_ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ruby-llm-eval",
@@ -366,6 +497,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--task", action="append", help="Show only this task id (repeatable). Default: all."
     )
     ls.set_defaults(func=cmd_list_tasks)
+
+    doctor = sub.add_parser(
+        "doctor", help="Check install/runtime prerequisites and asset discovery."
+    )
+    doctor.add_argument("--tasks", help="Tasks directory to inspect instead of auto-discovery.")
+    doctor.add_argument("--config-dir", help="Directory containing providers.yaml + pricing.yaml.")
+    doctor.add_argument("--sandbox", help="Directory containing the sandbox Dockerfile.")
+    doctor.add_argument("--provider", help="Optional provider name to verify API-key readiness.")
+    doctor.add_argument(
+        "--api-key", help="Optional API key override for provider readiness checks."
+    )
+    doctor.set_defaults(func=cmd_doctor)
     return parser
 
 

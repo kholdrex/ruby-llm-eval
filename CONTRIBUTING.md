@@ -12,6 +12,9 @@ cd ruby-llm-eval
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
+# Verify the checkout sees configs/tasks/sandbox and whether Docker is available.
+ruby-llm-eval doctor
+
 # Sanity check (no API key needed): runs the seed tasks against the stub model
 # through the Docker sandbox.
 ruby-llm-eval run --provider stub --model stub
