@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,40 @@ import pytest
 from ruby_llm_eval.cli import build_parser, main
 
 TASKS_DIR = str(Path(__file__).resolve().parent.parent / "tasks")
+
+
+def test_docker_readiness_distinguishes_missing_binary(monkeypatch):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: None)
+    assert cli._docker_readiness() == (False, "docker not found on PATH")
+
+
+def test_docker_readiness_times_out(monkeypatch):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: "/usr/bin/docker")
+
+    def timeout(*args, **kwargs):
+        assert kwargs["timeout"] == cli.DOCKER_INFO_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(cli.subprocess, "run", timeout)
+    ok, detail = cli._docker_readiness()
+    assert ok is False
+    assert "timed out" in detail
+
+
+def test_docker_readiness_reports_daemon_failure_not_missing_binary(monkeypatch):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "permission denied\n"),
+    )
+    assert cli._docker_readiness() == (False, "permission denied")
 
 
 def write_private_task(tasks_dir: Path, task_id: str, method_name: str) -> Path:
@@ -34,6 +69,14 @@ def test_parser_accepts_offline_stub_flag():
     assert args.offline_stub is True
 
 
+def test_parser_accepts_doctor_flags():
+    args = build_parser().parse_args(
+        ["doctor", "--provider", "anthropic", "--config-dir", "/tmp/cfg"]
+    )
+    assert args.provider == "anthropic"
+    assert args.config_dir == "/tmp/cfg"
+
+
 def test_style_defaults_off():
     args = build_parser().parse_args(["run", "--model", "m"])
     assert args.style is False
@@ -55,6 +98,330 @@ def test_list_tasks_filter(capsys):
     out = capsys.readouterr().out
     assert "001_fizzbuzz" in out
     assert "002_palindrome" not in out
+
+
+def test_doctor_reports_healthy_install(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+    (tasks_dir / "VERSION").write_text("test-version\n", encoding="utf-8")
+
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "providers.yaml").write_text(
+        "providers:\n"
+        "  stub:\n"
+        "    type: stub\n"
+        "  anthropic:\n"
+        "    type: anthropic\n"
+        "    base_url: https://api.anthropic.com\n"
+        "    api_key_env: ANTHROPIC_API_KEY\n",
+        encoding="utf-8",
+    )
+    (config_dir / "pricing.yaml").write_text("models: {}\n", encoding="utf-8")
+
+    sandbox_dir = tmp_path / "sandbox"
+    sandbox_dir.mkdir()
+    (sandbox_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "_docker_readiness", lambda: (True, "Docker daemon reachable"))
+    monkeypatch.setattr(cli, "image_exists", lambda image=cli.IMAGE_TAG: False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    rc = main(
+        [
+            "doctor",
+            "--tasks",
+            str(tasks_dir),
+            "--config-dir",
+            str(config_dir),
+            "--sandbox",
+            str(sandbox_dir),
+            "--provider",
+            "anthropic",
+        ]
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[OK] config:" in out
+    assert "[OK] providers:" in out
+    assert "[OK] pricing:" in out
+    assert "[OK] tasks:" in out
+    assert "test-version" in out
+    assert "[OK] docker:" in out
+    assert "missing (will build on first run)" in out
+    assert "[OK] provider anthropic: API key available" in out
+
+
+def test_doctor_fails_when_explicit_sandbox_path_is_missing(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+    (tasks_dir / "VERSION").write_text("test-version\n", encoding="utf-8")
+
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "providers.yaml").write_text(
+        "providers:\n  stub:\n    type: stub\n",
+        encoding="utf-8",
+    )
+    (config_dir / "pricing.yaml").write_text("models: {}\n", encoding="utf-8")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "_docker_readiness", lambda: (True, "Docker daemon reachable"))
+    monkeypatch.setattr(cli, "image_exists", lambda image=cli.IMAGE_TAG: True)
+
+    rc = main(
+        [
+            "doctor",
+            "--tasks",
+            str(tasks_dir),
+            "--config-dir",
+            str(config_dir),
+            "--sandbox",
+            str(tmp_path / "missing-sandbox"),
+        ]
+    )
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] sandbox: Explicit sandbox path does not exist:" in out
+
+
+def test_doctor_fails_when_explicit_config_path_is_missing(tmp_path, monkeypatch, capsys):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "_docker_readiness", lambda: (True, "Docker daemon reachable"))
+    monkeypatch.setattr(cli, "image_exists", lambda image=cli.IMAGE_TAG: True)
+
+    missing_config = tmp_path / "missing-config"
+    rc = main(["doctor", "--config-dir", str(missing_config)])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert f"[FAIL] config: Explicit configs path does not exist: {missing_config}" in out
+
+
+def test_doctor_fails_when_explicit_sandbox_path_has_no_dockerfile(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+    (tasks_dir / "VERSION").write_text("test-version\n", encoding="utf-8")
+
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "providers.yaml").write_text(
+        "providers:\n  stub:\n    type: stub\n",
+        encoding="utf-8",
+    )
+    (config_dir / "pricing.yaml").write_text("models: {}\n", encoding="utf-8")
+
+    sandbox_dir = tmp_path / "sandbox-without-dockerfile"
+    sandbox_dir.mkdir()
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "_docker_readiness", lambda: (True, "Docker daemon reachable"))
+    monkeypatch.setattr(cli, "image_exists", lambda image=cli.IMAGE_TAG: True)
+
+    rc = main(
+        [
+            "doctor",
+            "--tasks",
+            str(tasks_dir),
+            "--config-dir",
+            str(config_dir),
+            "--sandbox",
+            str(sandbox_dir),
+        ]
+    )
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] sandbox: Could not find 'Dockerfile' in explicit sandbox path:" in out
+
+
+def test_doctor_fails_when_provider_key_missing(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+    (tasks_dir / "VERSION").write_text("test-version\n", encoding="utf-8")
+
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "providers.yaml").write_text(
+        "providers:\n"
+        "  anthropic:\n"
+        "    type: anthropic\n"
+        "    base_url: https://api.anthropic.com\n"
+        "    api_key_env: ANTHROPIC_API_KEY\n",
+        encoding="utf-8",
+    )
+    (config_dir / "pricing.yaml").write_text("models: {}\n", encoding="utf-8")
+
+    sandbox_dir = tmp_path / "sandbox"
+    sandbox_dir.mkdir()
+    (sandbox_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "_docker_readiness", lambda: (True, "Docker daemon reachable"))
+    monkeypatch.setattr(cli, "image_exists", lambda image=cli.IMAGE_TAG: True)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    rc = main(
+        [
+            "doctor",
+            "--tasks",
+            str(tasks_dir),
+            "--config-dir",
+            str(config_dir),
+            "--sandbox",
+            str(sandbox_dir),
+            "--provider",
+            "anthropic",
+        ]
+    )
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] provider anthropic: set ANTHROPIC_API_KEY or pass --api-key" in out
+
+
+def test_doctor_fails_when_docker_daemon_unavailable(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+    (tasks_dir / "VERSION").write_text("test-version\n", encoding="utf-8")
+
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "providers.yaml").write_text(
+        "providers:\n  stub:\n    type: stub\n",
+        encoding="utf-8",
+    )
+    (config_dir / "pricing.yaml").write_text("models: {}\n", encoding="utf-8")
+
+    sandbox_dir = tmp_path / "sandbox"
+    sandbox_dir.mkdir()
+    (sandbox_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "_docker_readiness",
+        lambda: (False, "Docker daemon unreachable: permission denied"),
+    )
+    monkeypatch.setattr(cli, "image_exists", lambda image=cli.IMAGE_TAG: True)
+
+    rc = main(
+        [
+            "doctor",
+            "--tasks",
+            str(tasks_dir),
+            "--config-dir",
+            str(config_dir),
+            "--sandbox",
+            str(sandbox_dir),
+        ]
+    )
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] docker: Docker daemon unreachable: permission denied" in out
+
+
+def test_doctor_fails_when_pricing_config_invalid(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+    (tasks_dir / "VERSION").write_text("test-version\n", encoding="utf-8")
+
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "providers.yaml").write_text(
+        "providers:\n  stub:\n    type: stub\n",
+        encoding="utf-8",
+    )
+    (config_dir / "pricing.yaml").write_text(
+        "models:\n  stub:\n    input: 0.0\n",
+        encoding="utf-8",
+    )
+
+    sandbox_dir = tmp_path / "sandbox"
+    sandbox_dir.mkdir()
+    (sandbox_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "_docker_readiness", lambda: (True, "Docker daemon reachable"))
+    monkeypatch.setattr(cli, "image_exists", lambda image=cli.IMAGE_TAG: True)
+
+    rc = main(
+        [
+            "doctor",
+            "--tasks",
+            str(tasks_dir),
+            "--config-dir",
+            str(config_dir),
+            "--sandbox",
+            str(sandbox_dir),
+        ]
+    )
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] pricing:" in out
+    assert "missing output" in out
+
+
+def test_doctor_fails_when_pricing_value_is_boolean(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+    (tasks_dir / "VERSION").write_text("test-version\n", encoding="utf-8")
+
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "providers.yaml").write_text(
+        "providers:\n  stub:\n    type: stub\n",
+        encoding="utf-8",
+    )
+    (config_dir / "pricing.yaml").write_text(
+        "models:\n  stub:\n    input: true\n    output: 0.0\n",
+        encoding="utf-8",
+    )
+
+    sandbox_dir = tmp_path / "sandbox"
+    sandbox_dir.mkdir()
+    (sandbox_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "_docker_readiness", lambda: (True, "Docker daemon reachable"))
+    monkeypatch.setattr(cli, "image_exists", lambda image=cli.IMAGE_TAG: True)
+
+    rc = main(
+        [
+            "doctor",
+            "--tasks",
+            str(tasks_dir),
+            "--config-dir",
+            str(config_dir),
+            "--sandbox",
+            str(sandbox_dir),
+        ]
+    )
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] pricing:" in out
+    assert "non-numeric input price: True" in out
 
 
 def test_stub_provider_smoke_selects_private_task_without_docker(tmp_path, monkeypatch, capsys):
@@ -134,6 +501,10 @@ def test_stub_provider_model_without_offline_stub_uses_docker(tmp_path, monkeypa
     tasks_dir = tmp_path / "tasks"
     write_private_task(tasks_dir, "001_private", "add")
 
+    sandbox_dir = tmp_path / "sandbox"
+    sandbox_dir.mkdir()
+    (sandbox_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+
     import ruby_llm_eval.cli as cli
     from ruby_llm_eval.evaluate import STATUS_PASSED, SampleResult
 
@@ -165,6 +536,8 @@ def test_stub_provider_model_without_offline_stub_uses_docker(tmp_path, monkeypa
             "stub",
             "--tasks",
             str(tasks_dir),
+            "--sandbox",
+            str(sandbox_dir),
             "--output",
             str(tmp_path / "results"),
             "-n",
@@ -174,6 +547,42 @@ def test_stub_provider_model_without_offline_stub_uses_docker(tmp_path, monkeypa
 
     assert rc == 0
     assert calls == {"docker_available": 1, "ensure_image": 1, "run_sample": 1}
+
+
+def test_run_fails_when_explicit_sandbox_path_is_missing(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private", "add")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "ensure_image",
+        lambda *_args, **_kwargs: pytest.fail("ensure_image ran"),
+    )
+
+    rc = main(
+        [
+            "run",
+            "--model",
+            "stub",
+            "--provider",
+            "stub",
+            "--tasks",
+            str(tasks_dir),
+            "--sandbox",
+            str(tmp_path / "missing-sandbox"),
+            "--output",
+            str(tmp_path / "results"),
+            "-n",
+            "1",
+        ]
+    )
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Explicit sandbox path does not exist:" in err
 
 
 def test_offline_stub_rejects_style_without_checking_docker(monkeypatch):

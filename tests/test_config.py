@@ -140,3 +140,11 @@ def test_find_tasks_dir_falls_back_to_packaged_assets_without_repo(tmp_path, mon
 
     found = find_tasks_dir()
     assert found == packaged_tasks
+
+
+def test_find_tasks_dir_rejects_invalid_explicit_path_in_strict_mode(tmp_path):
+    bad = tmp_path / "not-tasks"
+    bad.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="explicit tasks path"):
+        find_tasks_dir(str(bad), strict_explicit=True)

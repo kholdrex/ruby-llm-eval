@@ -69,6 +69,16 @@ Windows, Docker Desktop is the easiest option.
 git clone https://github.com/kholdrex/ruby-llm-eval.git
 cd ruby-llm-eval
 pip install -e .
+
+# 2. Verify the install sees tasks/configs/sandbox and whether Docker is ready
+ruby-llm-eval doctor
+```
+
+If you already know which provider you want to use, you can also ask doctor to
+check whether its API key is present:
+
+```bash
+ruby-llm-eval doctor --provider anthropic
 ```
 
 ### Start with a private task, safely
