@@ -64,28 +64,31 @@ def test_find_config_dir_uses_explicit_path_when_marker_exists(tmp_path, monkeyp
     assert found == custom
 
 
-def test_find_config_dir_rejects_explicit_path_without_marker_in_strict_mode(tmp_path):
+def test_find_config_dir_explicit_path_without_marker_raises(tmp_path):
     bad = tmp_path / "bad-config"
     bad.mkdir()
 
     with pytest.raises(FileNotFoundError) as exc_info:
-        find_config_dir(explicit=str(bad), strict_explicit=True)
+        find_config_dir(explicit=str(bad))
 
     message = str(exc_info.value)
     assert str(bad) in message
     assert "providers.yaml" in message
 
 
-def test_find_config_dir_invalid_explicit_path_falls_back_in_non_strict_mode(tmp_path, monkeypatch):
+def test_find_config_dir_explicit_path_without_marker_never_falls_back(tmp_path, monkeypatch):
     bad = tmp_path / "bad-config"
     bad.mkdir()
     env_config = tmp_path / "env-config"
     _write_custom_config_dir(env_config)
     monkeypatch.setenv("RUBY_LLM_EVAL_CONFIG_DIR", str(env_config))
 
-    found = find_config_dir(explicit=str(bad))
+    with pytest.raises(FileNotFoundError) as exc_info:
+        find_config_dir(explicit=str(bad))
 
-    assert found == env_config
+    message = str(exc_info.value)
+    assert str(bad) in message
+    assert "providers.yaml" in message
 
 
 def test_find_sandbox_dir_with_nonexistent_explicit_path_falls_back_to_env(tmp_path, monkeypatch):

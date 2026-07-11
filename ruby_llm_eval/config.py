@@ -66,7 +66,7 @@ def _find_dir_containing(
     )
 
 
-def find_config_dir(explicit: str | None = None, *, strict_explicit: bool = False) -> Path:
+def find_config_dir(explicit: str | None = None, *, strict_explicit: bool = True) -> Path:
     """Return the directory holding providers.yaml and pricing.yaml."""
     return _find_dir_containing(
         "configs", "providers.yaml", explicit, CONFIG_DIR_ENV, strict_explicit=strict_explicit
