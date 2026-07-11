@@ -78,10 +78,15 @@ def find_sandbox_dir(explicit: str | None = None, *, strict_explicit: bool = Fal
     return _find_dir_containing("sandbox", "Dockerfile", explicit, strict_explicit=strict_explicit)
 
 
-def find_tasks_dir(explicit: str | None = None) -> Path:
+def find_tasks_dir(explicit: str | None = None, *, strict_explicit: bool = False) -> Path:
     """Return the directory holding the bundled or user-supplied task set."""
     if explicit:
-        return Path(explicit)
+        explicit_path = Path(explicit)
+        if not strict_explicit or _looks_like_tasks_dir(explicit_path):
+            return explicit_path
+        if not explicit_path.exists():
+            raise FileNotFoundError(f"Explicit tasks path does not exist: {explicit_path}")
+        raise FileNotFoundError(f"Could not find tasks in explicit tasks path: {explicit_path}")
 
     here = Path.cwd()
     for parent in [here, *here.parents]:

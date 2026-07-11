@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,40 @@ import pytest
 from ruby_llm_eval.cli import build_parser, main
 
 TASKS_DIR = str(Path(__file__).resolve().parent.parent / "tasks")
+
+
+def test_docker_readiness_distinguishes_missing_binary(monkeypatch):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: None)
+    assert cli._docker_readiness() == (False, "docker not found on PATH")
+
+
+def test_docker_readiness_times_out(monkeypatch):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: "/usr/bin/docker")
+
+    def timeout(*args, **kwargs):
+        assert kwargs["timeout"] == cli.DOCKER_INFO_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(cli.subprocess, "run", timeout)
+    ok, detail = cli._docker_readiness()
+    assert ok is False
+    assert "timed out" in detail
+
+
+def test_docker_readiness_reports_daemon_failure_not_missing_binary(monkeypatch):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "permission denied\n"),
+    )
+    assert cli._docker_readiness() == (False, "permission denied")
 
 
 def write_private_task(tasks_dir: Path, task_id: str, method_name: str) -> Path:

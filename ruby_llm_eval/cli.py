@@ -38,6 +38,7 @@ from .tasks import discover_tasks, read_version
 
 # ANSI status glyphs (degrade gracefully — they are just decoration).
 _GLYPH = {"passed": "✓", "failed": "✗", "timeout": "⏱", "error": "!"}
+DOCKER_INFO_TIMEOUT_SECONDS = 5
 
 
 def _eprint(*args: object) -> None:
@@ -285,10 +286,18 @@ def _doctor_line(label: str, ok: bool, detail: str) -> None:
 
 def _docker_readiness() -> tuple[bool, str]:
     docker_path = shutil.which("docker")
-    if not docker_path or not docker_available():
+    if not docker_path:
         return False, "docker not found on PATH"
 
-    proc = subprocess.run([docker_path, "info"], capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            [docker_path, "info"],
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_INFO_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"docker info timed out after {DOCKER_INFO_TIMEOUT_SECONDS} seconds"
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip().splitlines()
         message = detail[0] if detail else "docker daemon is not ready"
@@ -345,7 +354,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             _doctor_line("pricing", False, str(exc))
 
     try:
-        tasks_dir = find_tasks_dir(args.tasks)
+        tasks_dir = find_tasks_dir(args.tasks, strict_explicit=True)
         tasks = discover_tasks(tasks_dir)
         version = read_version(tasks_dir)
         _doctor_line("tasks", True, f"{tasks_dir} ({len(tasks)} tasks, v{version})")
@@ -356,14 +365,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     try:
         sandbox_dir = find_sandbox_dir(args.sandbox, strict_explicit=True)
         _doctor_line("sandbox", True, str(sandbox_dir))
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         overall_ok = False
         _doctor_line("sandbox", False, str(exc))
 
     docker_ok, docker_detail = _docker_readiness()
     if docker_ok:
         _doctor_line("docker", True, docker_detail)
-        image_ok = image_exists()
+        image_ok = image_exists(IMAGE_TAG)
         image_detail = (
             f"{IMAGE_TAG} present" if image_ok else f"{IMAGE_TAG} missing (will build on first run)"
         )
