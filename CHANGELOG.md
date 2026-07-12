@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Modernize package license metadata to SPDX and explicit license-file fields,
+  avoiding deprecated setuptools metadata during distribution builds.
 - Reject non-string optional task `meta.yml` keys with task/file-specific diagnostics before checking supported metadata key names.
 - Reject unknown optional task `meta.yml` keys with task/file-specific diagnostics so metadata typos are not silently ignored.
 - Reject unsafe task-set `VERSION` labels that could break CLI or Markdown report output.
