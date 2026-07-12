@@ -188,6 +188,14 @@ def _detect_framework(task_dir: Path) -> tuple[tuple[str, str] | None, list[str]
 def _collect_task_file_errors(task_dir: Path) -> tuple[list[str], str | None, str | None]:
     """Collect malformed-file problems before reading task contents."""
     issues: list[str] = []
+    subdirectories = sorted(entry.name for entry in task_dir.iterdir() if entry.is_dir())
+    if subdirectories:
+        label = "subdirectory" if len(subdirectories) == 1 else "subdirectories"
+        issues.append(
+            f"unsupported {label}: {', '.join(subdirectories)} "
+            "(the sandbox only stages the task test and solution.rb)"
+        )
+
     for filename in (PROMPT_FILE, REFERENCE_FILE):
         if not (task_dir / filename).is_file():
             issues.append(f"missing {filename}")
