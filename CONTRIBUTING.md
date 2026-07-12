@@ -144,6 +144,12 @@ plumbing check. Offline stub reports are not real sandboxed correctness results.
 
 That's the whole contribution surface — no registry to edit, no code to touch.
 
+Tests that need local data may add a `support/` tree and load files relative to
+`__dir__`. The harness recursively stages regular files and directories from
+that one explicitly named tree in the read-only sandbox work mount. Other
+subdirectories, symlinks, sockets, devices, and named pipes are rejected. Do
+not put secrets or reference answers there: candidate code can read `support/`.
+
 ### Task guidelines
 
 - **Deterministic only.** Same input must always give the same result. Avoid
