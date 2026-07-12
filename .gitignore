@@ -5,6 +5,9 @@
 /results/
 results/
 
+# Local Hermes steward metadata
+.hermes-project/
+
 # Sandbox scratch (created when run_sample is used without an output dir)
 .rle_sandbox/
 
