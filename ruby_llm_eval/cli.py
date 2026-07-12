@@ -322,7 +322,12 @@ def cmd_validate_tasks(args: argparse.Namespace) -> int:
     passed = 0
     try:
         for task in tasks:
-            sample = Sample(index=0, code=task.reference(), input_tokens=0, output_tokens=0)
+            try:
+                reference = task.reference()
+            except (OSError, UnicodeError) as exc:
+                print(f"[FAIL] {task.id}: cannot read solution_ref.rb: {exc}")
+                continue
+            sample = Sample(index=0, code=reference, input_tokens=0, output_tokens=0)
             try:
                 result = run_sample(
                     task,
