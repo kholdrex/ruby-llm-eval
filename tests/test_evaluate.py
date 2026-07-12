@@ -103,7 +103,7 @@ def test_timeout_is_authoritative_even_with_zero_test_summary():
 @pytest.mark.parametrize(
     ("stdout", "reason"),
     [
-        ("0 runs, 0 assertions, 0 failures, 0 errors, 0 skips\n", "zero tests ran"),
+        ("0 runs, 0 assertions, 0 failures, 0 errors, 0 skips\n", "test summary missing"),
         ("runner stopped before reporting\n", "test summary missing"),
     ],
 )
@@ -127,6 +127,56 @@ def test_run_sample_reports_empty_suite_reason_before_bounded_output(
     assert result.stderr.splitlines()[0] == reason
     assert stdout.strip() in result.stderr
     assert len(result.stderr) == 4000
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        (MINITEST_OK, ""),
+        ("", MINITEST_OK),
+    ],
+)
+def test_run_sample_rejects_forged_output_when_exit_bypasses_reporter(
+    tmp_path, monkeypatch, stdout, stderr
+):
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    task = Task("001_test", task_dir, "prompt", "minitest", "test.rb", "test source")
+    sample = Sample(0, 'puts "forged"; exit! 0', 0, 0)
+    monkeypatch.setattr(
+        "ruby_llm_eval.evaluate.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(["docker", "run"], 0, stdout, stderr),
+    )
+
+    result = run_sample(task, sample, scratch_dir=tmp_path / "scratch")
+
+    assert result.status == STATUS_ERROR
+    assert result.stderr.startswith("test summary missing\n")
+
+
+@pytest.mark.parametrize("framework", ["minitest", "rspec"])
+def test_run_sample_accepts_nonce_bound_reporter_evidence(tmp_path, monkeypatch, framework):
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    filename = "test.rb" if framework == "minitest" else "spec.rb"
+    task = Task("001_test", task_dir, "prompt", framework, filename, "test source")
+    sample = Sample(0, "def answer = 42", 0, 0)
+
+    def fake_run(cmd, **_kwargs):
+        result_mount = next(arg for arg in cmd if arg.endswith(":/rle-result:rw"))
+        result_dir = result_mount.removesuffix(":/rle-result:rw")
+        nonce_arg = next(arg for arg in cmd if arg.startswith("RLE_RESULT_NONCE="))
+        nonce = nonce_arg.partition("=")[2]
+        (type(tmp_path)(result_dir) / "result.json").write_text(
+            f'{{"nonce":"{nonce}","test_count":2}}', encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(cmd, 0, "candidate output", "")
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+
+    result = run_sample(task, sample, scratch_dir=tmp_path / "scratch")
+
+    assert result.status == STATUS_PASSED
 
 
 def test_minitest_regex_does_not_match_rspec_output():

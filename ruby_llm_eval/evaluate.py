@@ -54,6 +54,39 @@ FRAMEWORKS = {
 _TIMEOUT_EXIT_CODE = 124
 _SUMMARY_NOT_PARSED = object()
 
+_MINITEST_EVIDENCE_REPORTER = r"""require "json"
+require "minitest"
+
+class RleEvidenceReporter < Minitest::AbstractReporter
+  def initialize; super; @count = 0; end
+  def record(result); @count += 1; end
+  def report
+    File.write(ENV.fetch("RLE_RESULT_FILE"), JSON.generate(
+      {"nonce" => ENV.fetch("RLE_RESULT_NONCE"), "test_count" => @count}))
+  end
+end
+
+module Minitest
+  extensions << "rle_evidence"
+  def self.plugin_rle_evidence_init(options)
+    reporter << RleEvidenceReporter.new
+  end
+end
+"""
+
+_RSPEC_EVIDENCE_FORMATTER = r"""require "json"
+
+class RleEvidenceFormatter
+  RSpec::Core::Formatters.register self, :example_finished, :close
+  def initialize(output); @count = 0; end
+  def example_finished(notification); @count += 1; end
+  def close(notification)
+    File.write(ENV.fetch("RLE_RESULT_FILE"), JSON.generate(
+      {"nonce" => ENV.fetch("RLE_RESULT_NONCE"), "test_count" => @count}))
+  end
+end
+"""
+
 STATUS_PASSED = "passed"
 STATUS_FAILED = "failed"
 STATUS_TIMEOUT = "timeout"
@@ -129,9 +162,9 @@ def _test_execution_error(test_count: int | None) -> str:
     return "zero tests ran" if test_count == 0 else "test summary missing"
 
 
-def _docker_cmd(container, image, work, *, timeout, memory, cpus, inner):
+def _docker_cmd(container, image, work, *, timeout, memory, cpus, inner, result_dir=None, env=None):
     """Build the locked-down ``docker run`` command wrapping ``inner`` (argv)."""
-    return [
+    cmd = [
         "docker",
         "run",
         "--rm",
@@ -154,6 +187,12 @@ def _docker_cmd(container, image, work, *, timeout, memory, cpus, inner):
         f"{work}:/work:ro",
         "-w",
         "/work",
+    ]
+    if result_dir is not None:
+        cmd += ["-v", f"{result_dir}:/rle-result:rw"]
+    for key, value in (env or {}).items():
+        cmd += ["-e", f"{key}={value}"]
+    return cmd + [
         image,
         "timeout",
         f"{timeout}s",
@@ -191,11 +230,19 @@ def run_sample(
     # Absolute path: `docker -v` requires an absolute bind-mount source, and the
     # output dir (hence scratch_dir) is often a relative path like "results".
     work = Path(tempfile.mkdtemp(prefix="rle_", dir=str(scratch_root))).resolve()
+    result_dir = Path(tempfile.mkdtemp(prefix="rle_result_", dir=str(scratch_root))).resolve()
     try:
         solution = work / "solution.rb"
         test = work / task.test_filename
+        reporter = work / "rle_evidence.rb"
         solution.write_text(sample.code, encoding="utf-8")
         test.write_text(task.test, encoding="utf-8")
+        reporter.write_text(
+            _MINITEST_EVIDENCE_REPORTER
+            if task.framework == "minitest"
+            else _RSPEC_EVIDENCE_FORMATTER,
+            encoding="utf-8",
+        )
 
         # The container runs as a non-root user whose uid differs from the host
         # on native Linux. mkdtemp creates the dir as 0700, so without this the
@@ -204,8 +251,25 @@ def run_sample(
         work.chmod(0o755)
         solution.chmod(0o644)
         test.chmod(0o644)
+        reporter.chmod(0o644)
+        result_dir.chmod(0o777)
 
         container = f"rle_{uuid.uuid4().hex[:12]}"
+        nonce = uuid.uuid4().hex
+        result_file = result_dir / "result.json"
+        if task.framework == "minitest":
+            inner = ["ruby", "-r", "/work/rle_evidence.rb", task.test_filename]
+        else:
+            inner = [
+                "rspec",
+                "--require",
+                "/work/rle_evidence.rb",
+                "--format",
+                "RleEvidenceFormatter",
+                "--format",
+                "progress",
+                task.test_filename,
+            ]
         cmd = _docker_cmd(
             container,
             image,
@@ -213,7 +277,9 @@ def run_sample(
             timeout=timeout,
             memory=memory,
             cpus=cpus,
-            inner=[*framework["command"], task.test_filename],
+            inner=inner,
+            result_dir=result_dir,
+            env={"RLE_RESULT_FILE": "/rle-result/result.json", "RLE_RESULT_NONCE": nonce},
         )
 
         try:
@@ -237,7 +303,21 @@ def run_sample(
                 proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
             )
 
-        test_count = _parse_test_summary(proc.stdout, proc.stderr, framework["summary"])
+        # Candidate stdout/stderr is untrusted. Only the generated framework
+        # reporter writes this nonce-bound evidence on the separate result mount.
+        test_count = None
+        try:
+            evidence = json.loads(result_file.read_text(encoding="utf-8"))
+            value = evidence.get("test_count")
+            if (
+                evidence.get("nonce") == nonce
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= 0
+            ):
+                test_count = value
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
         status = _classify(
             proc.returncode,
             proc.stdout,
@@ -254,6 +334,7 @@ def run_sample(
         return SampleResult(task.id, sample.index, status, stderr[:4000])
     finally:
         shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(result_dir, ignore_errors=True)
 
 
 def run_rubocop(
