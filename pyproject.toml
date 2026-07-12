@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=62.3.0"]
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,14 +7,14 @@ name = "ruby-llm-eval"
 version = "0.2.0"
 description = "Ruby-first, API-first benchmark measuring how well any LLM writes Ruby code (pass@1)."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "ruby-llm-eval contributors" }]
 keywords = ["llm", "ruby", "benchmark", "eval", "pass@1", "code-generation"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Ruby",
-  "License :: OSI Approved :: MIT License",
   "Topic :: Software Development :: Testing",
 ]
 dependencies = ["PyYAML>=6.0", "certifi>=2023.7.22"]
