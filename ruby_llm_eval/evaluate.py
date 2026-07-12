@@ -31,18 +31,17 @@ from .tasks import Task
 IMAGE_TAG = "ruby-llm-eval-sandbox:latest"
 
 # Each framework prints a one-line summary when it actually runs — Minitest
-# "3 runs, 9 assertions, ..." or RSpec "5 examples, 1 failure". Its presence
-# means a non-zero exit is a real test failure; its absence means the file blew
-# up before testing (a load/syntax error). `command` is how the test file is
-# executed inside the container.
+# "3 runs, 9 assertions, ..." or RSpec "5 examples, 1 failure". A positive
+# count means tests ran; a zero or missing count is an execution error.
+# `command` is how the test file is executed inside the container.
 FRAMEWORKS = {
     "minitest": {
         "command": ["ruby"],
-        "summary": re.compile(r"\d+ runs?, \d+ assertions?"),
+        "summary": re.compile(r"(\d+) runs?, \d+ assertions?"),
     },
     "rspec": {
         "command": ["rspec"],
-        "summary": re.compile(r"\d+ examples?, \d+ failures?"),
+        "summary": re.compile(r"(\d+) examples?, \d+ failures?"),
     },
 }
 
@@ -90,13 +89,21 @@ def ensure_image(dockerfile_dir: Path, image: str = IMAGE_TAG) -> None:
 
 
 def _classify(returncode: int, stdout: str, stderr: str, summary_re: re.Pattern) -> str:
-    if returncode == 0:
-        return STATUS_PASSED
     if returncode == _TIMEOUT_EXIT_CODE:
         return STATUS_TIMEOUT
-    if summary_re.search(stdout + "\n" + stderr):
-        return STATUS_FAILED
-    return STATUS_ERROR
+    summary = summary_re.search(stdout + "\n" + stderr)
+    if summary is None or int(summary.group(1)) == 0:
+        return STATUS_ERROR
+    return STATUS_PASSED if returncode == 0 else STATUS_FAILED
+
+
+def _test_execution_error(stdout: str, stderr: str, summary_re: re.Pattern) -> str:
+    summary = summary_re.search(stdout + "\n" + stderr)
+    return (
+        "zero tests ran"
+        if summary is not None and int(summary.group(1)) == 0
+        else "test summary missing"
+    )
 
 
 def _docker_cmd(container, image, work, *, timeout, memory, cpus, inner):
@@ -208,7 +215,12 @@ def run_sample(
             )
 
         status = _classify(proc.returncode, proc.stdout, proc.stderr, framework["summary"])
-        stderr = "" if status == STATUS_PASSED else (proc.stdout + proc.stderr).strip()
+        output = (proc.stdout + proc.stderr).strip()
+        if status == STATUS_ERROR:
+            reason = _test_execution_error(proc.stdout, proc.stderr, framework["summary"])
+            stderr = f"{reason}\n{output}" if output else reason
+        else:
+            stderr = "" if status == STATUS_PASSED else output
         return SampleResult(task.id, sample.index, status, stderr[:4000])
     finally:
         shutil.rmtree(work, ignore_errors=True)
