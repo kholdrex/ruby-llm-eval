@@ -100,6 +100,93 @@ def test_list_tasks_filter(capsys):
     assert "002_palindrome" not in out
 
 
+def test_validate_tasks_runs_reference_solutions_in_sandbox(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    first = write_private_task(tasks_dir, "001_private_add", "add")
+    second = write_private_task(tasks_dir, "002_private_sum", "sum_values")
+
+    import ruby_llm_eval.cli as cli
+    from ruby_llm_eval.evaluate import STATUS_FAILED, STATUS_PASSED, SampleResult
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+    (tmp_path / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    seen = []
+
+    def fake_run(task, sample, **kwargs):
+        seen.append((task.id, sample.code, kwargs))
+        status = STATUS_PASSED if task.id == first.name else STATUS_FAILED
+        return SampleResult(
+            task.id, 0, status, "assertion failed" if status == STATUS_FAILED else ""
+        )
+
+    monkeypatch.setattr(cli, "run_sample", fake_run)
+    rc = main(
+        [
+            "validate-tasks",
+            "--tasks",
+            str(tasks_dir),
+            "--sandbox",
+            str(tmp_path),
+            "--timeout",
+            "7",
+            "--memory",
+            "128m",
+            "--cpus",
+            "0.5",
+        ]
+    )
+
+    assert rc == 1
+    assert [item[0] for item in seen] == [first.name, second.name]
+    assert "def add" in seen[0][1]
+    assert seen[0][2]["timeout"] == 7
+    out = capsys.readouterr().out
+    assert "[PASS] 001_private_add" in out
+    assert "[FAIL] 002_private_sum: assertion failed" in out
+    assert "1 passed, 1 failed" in out
+
+
+def test_validate_tasks_supports_repeatable_task_filter(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+    write_private_task(tasks_dir, "002_private_sum", "sum_values")
+
+    import ruby_llm_eval.cli as cli
+    from ruby_llm_eval.evaluate import STATUS_PASSED, SampleResult
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+    seen = []
+
+    def fake_run(task, sample, **kwargs):
+        seen.append(task.id)
+        return SampleResult(task.id, 0, STATUS_PASSED, "")
+
+    monkeypatch.setattr(cli, "run_sample", fake_run)
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir), "--task", "002_private_sum"])
+
+    assert rc == 0
+    assert seen == ["002_private_sum"]
+    assert "1 passed, 0 failed" in capsys.readouterr().out
+
+
+def test_validate_tasks_requires_docker_before_build(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: False)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: pytest.fail("must not build"))
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 2
+    assert (
+        "Docker is required to validate task reference solutions safely" in capsys.readouterr().err
+    )
+
+
 def test_doctor_reports_healthy_install(tmp_path, monkeypatch, capsys):
     tasks_dir = tmp_path / "tasks"
     write_private_task(tasks_dir, "001_private_add", "add")

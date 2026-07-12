@@ -106,6 +106,14 @@ ruby-llm-eval list-tasks --tasks ../ruby_eval_private_tasks
 ruby-llm-eval list-tasks --tasks ../ruby_eval_private_tasks --task 001_invoice_total
 ```
 
+Then validate that each reference solution actually passes its tests in the
+same safe Docker sandbox used for model output:
+
+```bash
+ruby-llm-eval validate-tasks --tasks ../ruby_eval_private_tasks
+ruby-llm-eval validate-tasks --tasks ../ruby_eval_private_tasks --task 001_invoice_total
+```
+
 Then run a no-Docker plumbing check with the built-in `stub` provider. It
 returns that task's `solution_ref.rb`, skips the sandbox, and writes reports
 marked `evaluation_mode: "offline_stub"` / `sandboxed: false` so you can verify
