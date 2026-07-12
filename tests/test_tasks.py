@@ -348,7 +348,20 @@ def test_selected_malformed_task_reports_missing_reference_and_test_file(tmp_pat
 
 
 def test_load_task_rejects_unsupported_fixture_directory(tmp_path):
-    task_dir = write_task(tmp_path, "001_private_rails")
+    rails_test = """\
+require "rails/test_help"
+require_relative "solution"
+
+class UserTest < ActiveSupport::TestCase
+  self.fixture_paths = [File.expand_path("fixtures", __dir__)]
+  fixtures :users
+
+  def test_user_name
+    assert_equal "Alice", users(:alice).name
+  end
+end
+"""
+    task_dir = write_task(tmp_path, "001_private_rails", test=rails_test)
     fixtures_dir = task_dir / "fixtures"
     fixtures_dir.mkdir()
     (fixtures_dir / "users.yml").write_text("alice:\n  name: Alice\n", encoding="utf-8")
