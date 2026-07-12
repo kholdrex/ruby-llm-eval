@@ -347,6 +347,34 @@ def test_selected_malformed_task_reports_missing_reference_and_test_file(tmp_pat
     assert "has no test file" in message
 
 
+def test_load_task_rejects_unsupported_fixture_directory(tmp_path):
+    rails_test = """\
+require "rails/test_help"
+require_relative "solution"
+
+class UserTest < ActiveSupport::TestCase
+  self.fixture_paths = [File.expand_path("fixtures", __dir__)]
+  fixtures :users
+
+  def test_user_name
+    assert_equal "Alice", users(:alice).name
+  end
+end
+"""
+    task_dir = write_task(tmp_path, "001_private_rails", test=rails_test)
+    fixtures_dir = task_dir / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "users.yml").write_text("alice:\n  name: Alice\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_task(task_dir)
+
+    message = str(exc_info.value)
+    assert "001_private_rails" in message
+    assert "unsupported subdirectory: fixtures" in message
+    assert "sandbox only stages the task test and solution.rb" in message
+
+
 def test_task_has_reference_and_test():
     task = load_task(TASKS_DIR / "001_fizzbuzz")
     assert "fizzbuzz" in task.prompt.lower()
