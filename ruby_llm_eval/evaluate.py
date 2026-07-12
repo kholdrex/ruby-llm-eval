@@ -17,7 +17,6 @@ Each sample gets one of four statuses: ``passed``, ``failed``, ``timeout``,
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import subprocess
 import tempfile
@@ -30,29 +29,14 @@ from .tasks import Task
 
 IMAGE_TAG = "ruby-llm-eval-sandbox:latest"
 
-# Each framework prints a one-line summary when it actually runs — Minitest
-# "3 runs, 9 assertions, ..." or RSpec "5 examples, 1 failure". A positive
-# count means tests ran; a zero or missing count is an execution error.
-# `command` is how the test file is executed inside the container.
 FRAMEWORKS = {
-    "minitest": {
-        "command": ["ruby"],
-        "summary": re.compile(
-            r"^\s*(\d+) runs?, \d+ assertions?, \d+ failures?, \d+ errors?, \d+ skips?\s*$",
-            re.MULTILINE,
-        ),
-    },
-    "rspec": {
-        "command": ["rspec"],
-        "summary": re.compile(
-            r"^\s*(\d+) examples?, \d+ failures?(?:, \d+ pending)?\s*$", re.MULTILINE
-        ),
-    },
+    "minitest": {"command": ["ruby"]},
+    "rspec": {"command": ["rspec"]},
 }
 
 # coreutils `timeout` exits 124 when it has to kill the command.
 _TIMEOUT_EXIT_CODE = 124
-_SUMMARY_NOT_PARSED = object()
+
 
 _MINITEST_EVIDENCE_REPORTER = r"""require "json"
 require "minitest"
@@ -127,33 +111,10 @@ def ensure_image(dockerfile_dir: Path, image: str = IMAGE_TAG) -> None:
         build_image(dockerfile_dir, image)
 
 
-def _parse_test_summary(stdout: str, stderr: str, summary_re: re.Pattern) -> int | None:
-    """Return the test count from the authoritative framework summary.
-
-    Framework runners write their final summary to stdout. Selecting the last
-    complete summary line prevents earlier candidate output from overriding the
-    runner's actual result. Fall back to stderr only when stdout has no summary,
-    rather than inventing an ordering by combining the two streams.
-    """
-    matches = list(summary_re.finditer(stdout))
-    if not matches:
-        matches = list(summary_re.finditer(stderr))
-    return int(matches[-1].group(1)) if matches else None
-
-
-def _classify(
-    returncode: int,
-    stdout: str,
-    stderr: str,
-    summary_re: re.Pattern,
-    *,
-    test_count: int | None | object = _SUMMARY_NOT_PARSED,
-) -> str:
+def _classify(returncode: int, test_count: int | None) -> str:
     if returncode == _TIMEOUT_EXIT_CODE:
         return STATUS_TIMEOUT
-    if test_count is _SUMMARY_NOT_PARSED:
-        test_count = _parse_test_summary(stdout, stderr, summary_re)
-    if not isinstance(test_count, int) or test_count == 0:
+    if test_count is None or test_count == 0:
         return STATUS_ERROR
     return STATUS_PASSED if returncode == 0 else STATUS_FAILED
 
@@ -223,15 +184,14 @@ def run_sample(
     if not sample.code.strip():
         return SampleResult(task.id, sample.index, STATUS_ERROR, "empty completion")
 
-    framework = FRAMEWORKS[task.framework]
-
     scratch_root = Path(scratch_dir) if scratch_dir else Path.cwd() / ".rle_sandbox"
     scratch_root.mkdir(parents=True, exist_ok=True)
     # Absolute path: `docker -v` requires an absolute bind-mount source, and the
     # output dir (hence scratch_dir) is often a relative path like "results".
     work = Path(tempfile.mkdtemp(prefix="rle_", dir=str(scratch_root))).resolve()
-    result_dir = Path(tempfile.mkdtemp(prefix="rle_result_", dir=str(scratch_root))).resolve()
+    result_dir = None
     try:
+        result_dir = Path(tempfile.mkdtemp(prefix="rle_result_", dir=str(scratch_root))).resolve()
         solution = work / "solution.rb"
         test = work / task.test_filename
         reporter = work / "rle_evidence.rb"
@@ -303,8 +263,9 @@ def run_sample(
                 proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
             )
 
-        # Candidate stdout/stderr is untrusted. Only the generated framework
-        # reporter writes this nonce-bound evidence on the separate result mount.
+        # Do not infer execution from output: the trusted task's framework hook
+        # records a count in a dedicated result file. The nonce associates that
+        # file with this run; it is not a boundary against an adversarial task.
         test_count = None
         try:
             evidence = json.loads(result_file.read_text(encoding="utf-8"))
@@ -318,13 +279,7 @@ def run_sample(
                 test_count = value
         except (OSError, json.JSONDecodeError, AttributeError):
             pass
-        status = _classify(
-            proc.returncode,
-            proc.stdout,
-            proc.stderr,
-            framework["summary"],
-            test_count=test_count,
-        )
+        status = _classify(proc.returncode, test_count)
         output = (proc.stdout + proc.stderr).strip()
         if status == STATUS_ERROR:
             reason = _test_execution_error(test_count)
@@ -334,7 +289,8 @@ def run_sample(
         return SampleResult(task.id, sample.index, status, stderr[:4000])
     finally:
         shutil.rmtree(work, ignore_errors=True)
-        shutil.rmtree(result_dir, ignore_errors=True)
+        if result_dir is not None:
+            shutil.rmtree(result_dir, ignore_errors=True)
 
 
 def run_rubocop(

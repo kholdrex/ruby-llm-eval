@@ -1,9 +1,10 @@
+import shutil
 import subprocess
 
 import pytest
 
 from ruby_llm_eval.evaluate import (
-    FRAMEWORKS,
+    IMAGE_TAG,
     STATUS_ERROR,
     STATUS_FAILED,
     STATUS_PASSED,
@@ -14,90 +15,37 @@ from ruby_llm_eval.evaluate import (
 from ruby_llm_eval.generate import Sample
 from ruby_llm_eval.tasks import Task
 
-MINITEST = FRAMEWORKS["minitest"]["summary"]
-RSPEC = FRAMEWORKS["rspec"]["summary"]
 
-MINITEST_OK = "3 runs, 9 assertions, 0 failures, 0 errors, 0 skips"
-MINITEST_FAIL = "3 runs, 9 assertions, 1 failures, 0 errors, 0 skips"
-RSPEC_FAIL = "5 examples, 1 failure"
-RSPEC_OK = "5 examples, 0 failures"
+def _docker_sandbox_ready():
+    if shutil.which("docker") is None:
+        return False
+    daemon = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
+    if daemon.returncode != 0:
+        return False
+    image = subprocess.run(
+        ["docker", "image", "inspect", IMAGE_TAG], capture_output=True, timeout=5
+    )
+    return image.returncode == 0
 
 
 def test_exit_zero_is_passed():
-    assert _classify(0, MINITEST_OK, "", MINITEST) == STATUS_PASSED
+    assert _classify(0, 3) == STATUS_PASSED
 
 
 def test_exit_124_is_timeout():
-    assert _classify(124, "", "", MINITEST) == STATUS_TIMEOUT
+    assert _classify(124, None) == STATUS_TIMEOUT
 
 
 def test_failed_assertion_is_failed():
-    assert _classify(1, MINITEST_FAIL, "", MINITEST) == STATUS_FAILED
+    assert _classify(1, 3) == STATUS_FAILED
 
 
 def test_load_error_is_error():
-    # No framework summary printed => the file blew up before tests ran.
-    stderr = "solution.rb:1: syntax error, unexpected end-of-input"
-    assert _classify(1, "", stderr, MINITEST) == STATUS_ERROR
-
-
-def test_rspec_failure_is_failed():
-    assert _classify(1, RSPEC_FAIL, "", RSPEC) == STATUS_FAILED
-
-
-@pytest.mark.parametrize(
-    ("summary", "framework"),
-    [
-        ("0 runs, 0 assertions, 0 failures, 0 errors, 0 skips", MINITEST),
-        ("0 examples, 0 failures", RSPEC),
-    ],
-)
-def test_zero_test_summary_is_error_even_with_exit_zero(summary, framework):
-    assert _classify(0, summary, "", framework) == STATUS_ERROR
-
-
-@pytest.mark.parametrize("returncode", [0, 1])
-def test_missing_summary_is_error_regardless_of_exit_code(returncode):
-    assert _classify(returncode, "test output", "warning", MINITEST) == STATUS_ERROR
-
-
-@pytest.mark.parametrize("summary", [MINITEST_OK, RSPEC_OK])
-def test_positive_test_summary_with_exit_zero_is_passed(summary):
-    framework = MINITEST if "runs" in summary else RSPEC
-    assert _classify(0, summary, "", framework) == STATUS_PASSED
-
-
-@pytest.mark.parametrize(
-    ("output", "framework"),
-    [
-        (
-            MINITEST_OK
-            + "\ncandidate noise\n0 runs, 0 assertions, 0 failures, 0 errors, 0 skips\n",
-            MINITEST,
-        ),
-        (RSPEC_OK + "\ncandidate noise\n0 examples, 0 failures\n", RSPEC),
-    ],
-)
-def test_final_zero_summary_overrides_fake_positive(output, framework):
-    assert _classify(0, output, "", framework) == STATUS_ERROR
-
-
-@pytest.mark.parametrize(
-    ("output", "framework"),
-    [
-        (
-            "0 runs, 0 assertions, 0 failures, 0 errors, 0 skips\ncandidate noise\n" + MINITEST_OK,
-            MINITEST,
-        ),
-        ("0 examples, 0 failures\ncandidate noise\n" + RSPEC_OK, RSPEC),
-    ],
-)
-def test_final_positive_summary_overrides_fake_zero(output, framework):
-    assert _classify(0, output, "", framework) == STATUS_PASSED
+    assert _classify(1, None) == STATUS_ERROR
 
 
 def test_timeout_is_authoritative_even_with_zero_test_summary():
-    assert _classify(124, "0 runs, 0 assertions", "", MINITEST) == STATUS_TIMEOUT
+    assert _classify(124, 0) == STATUS_TIMEOUT
 
 
 @pytest.mark.parametrize(
@@ -132,8 +80,8 @@ def test_run_sample_reports_empty_suite_reason_before_bounded_output(
 @pytest.mark.parametrize(
     ("stdout", "stderr"),
     [
-        (MINITEST_OK, ""),
-        ("", MINITEST_OK),
+        ("3 runs, 9 assertions, 0 failures, 0 errors, 0 skips", ""),
+        ("", "3 runs, 9 assertions, 0 failures, 0 errors, 0 skips"),
     ],
 )
 def test_run_sample_rejects_forged_output_when_exit_bypasses_reporter(
@@ -179,9 +127,56 @@ def test_run_sample_accepts_nonce_bound_reporter_evidence(tmp_path, monkeypatch,
     assert result.status == STATUS_PASSED
 
 
-def test_minitest_regex_does_not_match_rspec_output():
-    # A Minitest task whose output only has RSpec-style text never ran Minitest.
-    assert _classify(1, RSPEC_FAIL, "", MINITEST) == STATUS_ERROR
+@pytest.mark.skipif(not _docker_sandbox_ready(), reason="Docker sandbox image unavailable")
+@pytest.mark.parametrize(
+    ("framework", "filename", "test_source"),
+    [
+        (
+            "minitest",
+            "test.rb",
+            'require "minitest/autorun"\nrequire_relative "solution"\n'
+            "class AnswerTest < Minitest::Test\n"
+            "  def test_answer; assert_equal 42, answer; end\n"
+            "end\n",
+        ),
+        (
+            "rspec",
+            "spec.rb",
+            'require_relative "solution"\nRSpec.describe "answer" do\n'
+            '  it("is 42") { expect(answer).to eq(42) }\nend\n',
+        ),
+    ],
+)
+def test_run_sample_executes_generated_framework_reporter(
+    tmp_path, framework, filename, test_source
+):
+    task = Task("001_test", tmp_path, "prompt", framework, filename, test_source)
+    sample = Sample(0, "def answer = 42", 0, 0)
+
+    result = run_sample(task, sample, scratch_dir=tmp_path / "scratch")
+
+    assert result.status == STATUS_PASSED
+
+
+def test_run_sample_cleans_work_dir_when_result_dir_creation_fails(tmp_path, monkeypatch):
+    task = Task("001_test", tmp_path, "prompt", "minitest", "test.rb", "test source")
+    sample = Sample(0, "def answer = 42", 0, 0)
+    real_mkdtemp = __import__("tempfile").mkdtemp
+    calls = 0
+
+    def fail_second_mkdtemp(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("result directory unavailable")
+        return real_mkdtemp(*args, **kwargs)
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.tempfile.mkdtemp", fail_second_mkdtemp)
+
+    with pytest.raises(OSError, match="result directory unavailable"):
+        run_sample(task, sample, scratch_dir=tmp_path / "scratch")
+
+    assert not list((tmp_path / "scratch").iterdir())
 
 
 def test_run_sample_raises_infrastructure_error_for_docker_exit_125(tmp_path, monkeypatch):
