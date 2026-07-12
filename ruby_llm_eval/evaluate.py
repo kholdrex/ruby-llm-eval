@@ -17,7 +17,6 @@ Each sample gets one of four statuses: ``passed``, ``failed``, ``timeout``,
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import subprocess
 import tempfile
@@ -30,24 +29,47 @@ from .tasks import Task
 
 IMAGE_TAG = "ruby-llm-eval-sandbox:latest"
 
-# Each framework prints a one-line summary when it actually runs — Minitest
-# "3 runs, 9 assertions, ..." or RSpec "5 examples, 1 failure". Its presence
-# means a non-zero exit is a real test failure; its absence means the file blew
-# up before testing (a load/syntax error). `command` is how the test file is
-# executed inside the container.
 FRAMEWORKS = {
-    "minitest": {
-        "command": ["ruby"],
-        "summary": re.compile(r"\d+ runs?, \d+ assertions?"),
-    },
-    "rspec": {
-        "command": ["rspec"],
-        "summary": re.compile(r"\d+ examples?, \d+ failures?"),
-    },
+    "minitest": {"command": ["ruby"]},
+    "rspec": {"command": ["rspec"]},
 }
 
 # coreutils `timeout` exits 124 when it has to kill the command.
 _TIMEOUT_EXIT_CODE = 124
+
+
+_MINITEST_EVIDENCE_REPORTER = r"""require "json"
+require "minitest"
+
+class RleEvidenceReporter < Minitest::AbstractReporter
+  def initialize; super; @count = 0; end
+  def record(result); @count += 1; end
+  def report
+    File.write(ENV.fetch("RLE_RESULT_FILE"), JSON.generate(
+      {"nonce" => ENV.fetch("RLE_RESULT_NONCE"), "test_count" => @count}))
+  end
+end
+
+module Minitest
+  extensions << "rle_evidence"
+  def self.plugin_rle_evidence_init(options)
+    reporter << RleEvidenceReporter.new
+  end
+end
+"""
+
+_RSPEC_EVIDENCE_FORMATTER = r"""require "json"
+
+class RleEvidenceFormatter
+  RSpec::Core::Formatters.register self, :example_finished, :close
+  def initialize(output); @count = 0; end
+  def example_finished(notification); @count += 1; end
+  def close(notification)
+    File.write(ENV.fetch("RLE_RESULT_FILE"), JSON.generate(
+      {"nonce" => ENV.fetch("RLE_RESULT_NONCE"), "test_count" => @count}))
+  end
+end
+"""
 
 STATUS_PASSED = "passed"
 STATUS_FAILED = "failed"
@@ -89,19 +111,21 @@ def ensure_image(dockerfile_dir: Path, image: str = IMAGE_TAG) -> None:
         build_image(dockerfile_dir, image)
 
 
-def _classify(returncode: int, stdout: str, stderr: str, summary_re: re.Pattern) -> str:
-    if returncode == 0:
-        return STATUS_PASSED
+def _classify(returncode: int, test_count: int | None) -> str:
     if returncode == _TIMEOUT_EXIT_CODE:
         return STATUS_TIMEOUT
-    if summary_re.search(stdout + "\n" + stderr):
-        return STATUS_FAILED
-    return STATUS_ERROR
+    if test_count is None or test_count == 0:
+        return STATUS_ERROR
+    return STATUS_PASSED if returncode == 0 else STATUS_FAILED
 
 
-def _docker_cmd(container, image, work, *, timeout, memory, cpus, inner):
+def _test_execution_error(test_count: int | None) -> str:
+    return "zero tests ran" if test_count == 0 else "test summary missing"
+
+
+def _docker_cmd(container, image, work, *, timeout, memory, cpus, inner, result_dir=None, env=None):
     """Build the locked-down ``docker run`` command wrapping ``inner`` (argv)."""
-    return [
+    cmd = [
         "docker",
         "run",
         "--rm",
@@ -124,6 +148,12 @@ def _docker_cmd(container, image, work, *, timeout, memory, cpus, inner):
         f"{work}:/work:ro",
         "-w",
         "/work",
+    ]
+    if result_dir is not None:
+        cmd += ["-v", f"{result_dir}:/rle-result:rw"]
+    for key, value in (env or {}).items():
+        cmd += ["-e", f"{key}={value}"]
+    return cmd + [
         image,
         "timeout",
         f"{timeout}s",
@@ -154,18 +184,25 @@ def run_sample(
     if not sample.code.strip():
         return SampleResult(task.id, sample.index, STATUS_ERROR, "empty completion")
 
-    framework = FRAMEWORKS[task.framework]
-
     scratch_root = Path(scratch_dir) if scratch_dir else Path.cwd() / ".rle_sandbox"
     scratch_root.mkdir(parents=True, exist_ok=True)
     # Absolute path: `docker -v` requires an absolute bind-mount source, and the
     # output dir (hence scratch_dir) is often a relative path like "results".
     work = Path(tempfile.mkdtemp(prefix="rle_", dir=str(scratch_root))).resolve()
+    result_dir = None
     try:
+        result_dir = Path(tempfile.mkdtemp(prefix="rle_result_", dir=str(scratch_root))).resolve()
         solution = work / "solution.rb"
         test = work / task.test_filename
+        reporter = work / "rle_evidence.rb"
         solution.write_text(sample.code, encoding="utf-8")
         test.write_text(task.test, encoding="utf-8")
+        reporter.write_text(
+            _MINITEST_EVIDENCE_REPORTER
+            if task.framework == "minitest"
+            else _RSPEC_EVIDENCE_FORMATTER,
+            encoding="utf-8",
+        )
 
         # The container runs as a non-root user whose uid differs from the host
         # on native Linux. mkdtemp creates the dir as 0700, so without this the
@@ -174,8 +211,25 @@ def run_sample(
         work.chmod(0o755)
         solution.chmod(0o644)
         test.chmod(0o644)
+        reporter.chmod(0o644)
+        result_dir.chmod(0o777)
 
         container = f"rle_{uuid.uuid4().hex[:12]}"
+        nonce = uuid.uuid4().hex
+        result_file = result_dir / "result.json"
+        if task.framework == "minitest":
+            inner = ["ruby", "-r", "/work/rle_evidence.rb", task.test_filename]
+        else:
+            inner = [
+                "rspec",
+                "--require",
+                "/work/rle_evidence.rb",
+                "--format",
+                "RleEvidenceFormatter",
+                "--format",
+                "progress",
+                task.test_filename,
+            ]
         cmd = _docker_cmd(
             container,
             image,
@@ -183,7 +237,9 @@ def run_sample(
             timeout=timeout,
             memory=memory,
             cpus=cpus,
-            inner=[*framework["command"], task.test_filename],
+            inner=inner,
+            result_dir=result_dir,
+            env={"RLE_RESULT_FILE": "/rle-result/result.json", "RLE_RESULT_NONCE": nonce},
         )
 
         try:
@@ -207,11 +263,34 @@ def run_sample(
                 proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
             )
 
-        status = _classify(proc.returncode, proc.stdout, proc.stderr, framework["summary"])
-        stderr = "" if status == STATUS_PASSED else (proc.stdout + proc.stderr).strip()
+        # Do not infer execution from output: the trusted task's framework hook
+        # records a count in a dedicated result file. The nonce associates that
+        # file with this run; it is not a boundary against an adversarial task.
+        test_count = None
+        try:
+            evidence = json.loads(result_file.read_text(encoding="utf-8"))
+            value = evidence.get("test_count")
+            if (
+                evidence.get("nonce") == nonce
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= 0
+            ):
+                test_count = value
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
+        status = _classify(proc.returncode, test_count)
+        output = (proc.stdout + proc.stderr).strip()
+        if status == STATUS_ERROR:
+            reason = _test_execution_error(test_count)
+            stderr = f"{reason}\n{output}" if output else reason
+        else:
+            stderr = "" if status == STATUS_PASSED else output
         return SampleResult(task.id, sample.index, status, stderr[:4000])
     finally:
         shutil.rmtree(work, ignore_errors=True)
+        if result_dir is not None:
+            shutil.rmtree(result_dir, ignore_errors=True)
 
 
 def run_rubocop(

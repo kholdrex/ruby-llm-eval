@@ -173,6 +173,30 @@ def test_validate_tasks_supports_repeatable_task_filter(tmp_path, monkeypatch, c
     assert "1 passed, 0 failed" in capsys.readouterr().out
 
 
+def test_validate_tasks_shows_zero_test_reason_on_first_line(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+    from ruby_llm_eval.evaluate import STATUS_ERROR, SampleResult
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+    monkeypatch.setattr(
+        cli,
+        "run_sample",
+        lambda task, sample, **kwargs: SampleResult(
+            task.id, 0, STATUS_ERROR, "zero tests ran\n0 runs, 0 assertions"
+        ),
+    )
+
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 1
+    assert "[FAIL] 001_private_add: zero tests ran" in capsys.readouterr().out
+
+
 def test_validate_tasks_requires_docker_before_build(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     tasks_dir = tmp_path / "tasks"
