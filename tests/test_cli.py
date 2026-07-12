@@ -100,6 +100,245 @@ def test_list_tasks_filter(capsys):
     assert "002_palindrome" not in out
 
 
+def test_validate_tasks_runs_reference_solutions_in_sandbox(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    first = write_private_task(tasks_dir, "001_private_add", "add")
+    second = write_private_task(tasks_dir, "002_private_sum", "sum_values")
+
+    import ruby_llm_eval.cli as cli
+    from ruby_llm_eval.evaluate import STATUS_FAILED, STATUS_PASSED, SampleResult
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+    (tmp_path / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    seen = []
+
+    def fake_run(task, sample, **kwargs):
+        seen.append((task.id, sample.code, kwargs))
+        status = STATUS_PASSED if task.id == first.name else STATUS_FAILED
+        return SampleResult(
+            task.id, 0, status, "assertion failed" if status == STATUS_FAILED else ""
+        )
+
+    monkeypatch.setattr(cli, "run_sample", fake_run)
+    rc = main(
+        [
+            "validate-tasks",
+            "--tasks",
+            str(tasks_dir),
+            "--sandbox",
+            str(tmp_path),
+            "--timeout",
+            "7",
+            "--memory",
+            "128m",
+            "--cpus",
+            "0.5",
+        ]
+    )
+
+    assert rc == 1
+    assert [item[0] for item in seen] == [first.name, second.name]
+    assert "def add" in seen[0][1]
+    assert seen[0][2]["timeout"] == 7
+    out = capsys.readouterr().out
+    assert "[PASS] 001_private_add" in out
+    assert "[FAIL] 002_private_sum: assertion failed" in out
+    assert "1 passed, 1 failed" in out
+
+
+def test_validate_tasks_supports_repeatable_task_filter(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+    write_private_task(tasks_dir, "002_private_sum", "sum_values")
+
+    import ruby_llm_eval.cli as cli
+    from ruby_llm_eval.evaluate import STATUS_PASSED, SampleResult
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+    seen = []
+
+    def fake_run(task, sample, **kwargs):
+        seen.append(task.id)
+        return SampleResult(task.id, 0, STATUS_PASSED, "")
+
+    monkeypatch.setattr(cli, "run_sample", fake_run)
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir), "--task", "002_private_sum"])
+
+    assert rc == 0
+    assert seen == ["002_private_sum"]
+    assert "1 passed, 0 failed" in capsys.readouterr().out
+
+
+def test_validate_tasks_requires_docker_before_build(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: False)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: pytest.fail("must not build"))
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 2
+    assert (
+        "Docker is required to validate task reference solutions safely" in capsys.readouterr().err
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        subprocess.CalledProcessError(1, ["docker", "build"], stderr="daemon unavailable"),
+        OSError("docker executable could not be launched"),
+    ],
+)
+def test_validate_tasks_reports_image_setup_failures_as_usage_errors(
+    tmp_path, monkeypatch, capsys, failure
+):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+
+    def fail_setup(_sandbox):
+        raise failure
+
+    monkeypatch.setattr(cli, "ensure_image", fail_setup)
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Error: Docker sandbox setup failed:" in captured.err
+    detail = failure.stderr if isinstance(failure, subprocess.CalledProcessError) else str(failure)
+    assert detail in captured.err
+
+
+def test_validate_tasks_reports_sandbox_process_launch_failure_as_usage_error(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+
+    def fail_launch(*_args, **_kwargs):
+        raise OSError("cannot start docker process")
+
+    monkeypatch.setattr(cli, "run_sample", fail_launch)
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Error: Docker sandbox process failed:" in captured.err
+    assert "cannot start docker process" in captured.err
+    assert "Validated" not in captured.out
+
+
+def test_validate_tasks_maps_docker_run_exit_125_to_infrastructure_error(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+
+    def fail_invocation(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(
+            125, ["docker", "run"], stderr="docker: Error response from daemon"
+        )
+
+    monkeypatch.setattr(cli, "run_sample", fail_invocation)
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Docker sandbox process failed" in captured.err
+    assert "Error response from daemon" in captured.err
+    assert "[FAIL]" not in captured.out
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure"])
+def test_validate_tasks_cleans_scratch_directory(tmp_path, monkeypatch, outcome):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+    from ruby_llm_eval.evaluate import STATUS_FAILED, STATUS_PASSED, SampleResult
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+    status = STATUS_PASSED if outcome == "success" else STATUS_FAILED
+    monkeypatch.setattr(
+        cli, "run_sample", lambda task, sample, **kwargs: SampleResult(task.id, 0, status, "")
+    )
+
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == (0 if outcome == "success" else 1)
+    assert not list(tmp_path.glob(".ruby-llm-eval-validation-*"))
+
+
+@pytest.mark.parametrize(
+    ("read_error", "detail"),
+    [(FileNotFoundError("missing"), "missing"), (PermissionError("denied"), "denied")],
+)
+def test_validate_tasks_reports_unreadable_reference_as_task_failure(
+    tmp_path, monkeypatch, capsys, read_error, detail
+):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+    from ruby_llm_eval.tasks import Task
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+    monkeypatch.setattr(Task, "reference", lambda _self: (_ for _ in ()).throw(read_error))
+    monkeypatch.setattr(cli, "run_sample", lambda *_args, **_kwargs: pytest.fail("must not run"))
+
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert f"[FAIL] 001_private_add: cannot read solution_ref.rb: {detail}" in captured.out
+    assert "0 passed, 1 failed" in captured.out
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("selected", [None, "999_unknown"])
+def test_validate_tasks_rejects_empty_or_unknown_task_set(tmp_path, monkeypatch, capsys, selected):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    argv = ["validate-tasks", "--tasks", str(tasks_dir)]
+    if selected:
+        argv.extend(["--task", selected])
+
+    rc = main(argv)
+
+    assert rc == 2
+    error = capsys.readouterr().err
+    assert ("Unknown task id(s)" if selected else "No tasks found") in error
+
+
 def test_doctor_reports_healthy_install(tmp_path, monkeypatch, capsys):
     tasks_dir = tmp_path / "tasks"
     write_private_task(tasks_dir, "001_private_add", "add")

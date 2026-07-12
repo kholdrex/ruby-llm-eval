@@ -198,6 +198,15 @@ def run_sample(
             subprocess.run(["docker", "kill", container], capture_output=True)
             return SampleResult(task.id, sample.index, STATUS_TIMEOUT, "host-side timeout")
 
+        # Docker reserves 125 for failures to invoke the container (for
+        # example, an unavailable daemon or an invalid bind mount).  This is
+        # infrastructure failure, not a test result, so let CLI callers map it
+        # to their infrastructure-error exit code.
+        if proc.returncode == 125:
+            raise subprocess.CalledProcessError(
+                proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
+            )
+
         status = _classify(proc.returncode, proc.stdout, proc.stderr, framework["summary"])
         stderr = "" if status == STATUS_PASSED else (proc.stdout + proc.stderr).strip()
         return SampleResult(task.id, sample.index, status, stderr[:4000])
@@ -252,6 +261,11 @@ def run_rubocop(
         except subprocess.TimeoutExpired:
             subprocess.run(["docker", "kill", container], capture_output=True)
             return None
+
+        if proc.returncode == 125:
+            raise subprocess.CalledProcessError(
+                proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
+            )
 
         try:
             data = json.loads(proc.stdout)

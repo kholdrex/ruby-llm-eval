@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +32,7 @@ from .evaluate import (
     run_rubocop,
     run_sample,
 )
-from .generate import generate_for_task, safe_model_dir
+from .generate import Sample, generate_for_task, safe_model_dir
 from .model_client import build_client
 from .report import build_report, summarize_task, write_reports
 from .tasks import discover_tasks, read_version
@@ -43,6 +44,18 @@ DOCKER_INFO_TIMEOUT_SECONDS = 5
 
 def _eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
+
+
+def _report_docker_failure(stage: str, exc: subprocess.CalledProcessError | OSError) -> None:
+    """Print a concise diagnostic for Docker client/build launch failures."""
+    detail = ""
+    if isinstance(exc, subprocess.CalledProcessError):
+        output = exc.stderr or exc.stdout
+        if output:
+            detail = str(output).strip()
+    if not detail:
+        detail = str(exc)
+    _eprint(f"Error: Docker sandbox {stage} failed: {detail}")
 
 
 def _process_sample(task, sample, *, timeout, memory, cpus, scratch_dir, rubocop_config):
@@ -161,7 +174,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         _eprint(f"Building/locating sandbox image {IMAGE_TAG} ...")
-        ensure_image(find_sandbox_dir(args.sandbox, strict_explicit=True))
+        try:
+            ensure_image(find_sandbox_dir(args.sandbox, strict_explicit=True))
+        except (subprocess.CalledProcessError, OSError) as exc:
+            _report_docker_failure("setup", exc)
+            return 2
 
     out_root = Path(args.output)
     samples_dir = out_root / safe_model_dir(args.model)
@@ -199,16 +216,20 @@ def cmd_run(args: argparse.Namespace) -> int:
             if offline_stub:
                 pairs = _evaluate_stub_samples(task, samples)
             else:
-                pairs = _evaluate_samples(
-                    task,
-                    samples,
-                    timeout=args.timeout,
-                    memory=args.memory,
-                    cpus=args.cpus,
-                    scratch_dir=scratch_dir,
-                    jobs=jobs,
-                    rubocop_config=rubocop_config,
-                )
+                try:
+                    pairs = _evaluate_samples(
+                        task,
+                        samples,
+                        timeout=args.timeout,
+                        memory=args.memory,
+                        cpus=args.cpus,
+                        scratch_dir=scratch_dir,
+                        jobs=jobs,
+                        rubocop_config=rubocop_config,
+                    )
+                except (subprocess.CalledProcessError, OSError) as exc:
+                    _report_docker_failure("process", exc)
+                    return 2
             results = [result for result, _ in pairs]
             offenses = [offense for _, offense in pairs] if args.style else None
             summary = summarize_task(
@@ -277,6 +298,61 @@ def cmd_list_tasks(args: argparse.Namespace) -> int:
     for task in tasks:
         print(f"  {task.id:<30} {task.framework}")
     return 0
+
+
+def cmd_validate_tasks(args: argparse.Namespace) -> int:
+    """Run task reference solutions against their tests in the Docker sandbox."""
+    tasks_dir = find_tasks_dir(args.tasks)
+    tasks = discover_tasks(tasks_dir, only=args.task or None)
+    if not docker_available():
+        _eprint(
+            "Error: Docker is required to validate task reference solutions safely but was not "
+            "found on PATH."
+        )
+        return 2
+
+    try:
+        ensure_image(find_sandbox_dir(args.sandbox, strict_explicit=True))
+    except (subprocess.CalledProcessError, OSError) as exc:
+        _report_docker_failure("setup", exc)
+        return 2
+    # Keep scratch under the current directory so Docker Desktop can bind-mount
+    # it, but make it unique so cleanup can never remove a user's existing path.
+    scratch_dir = Path(tempfile.mkdtemp(prefix=".ruby-llm-eval-validation-", dir=Path.cwd()))
+    passed = 0
+    try:
+        for task in tasks:
+            try:
+                reference = task.reference()
+            except (OSError, UnicodeError) as exc:
+                print(f"[FAIL] {task.id}: cannot read solution_ref.rb: {exc}")
+                continue
+            sample = Sample(index=0, code=reference, input_tokens=0, output_tokens=0)
+            try:
+                result = run_sample(
+                    task,
+                    sample,
+                    timeout=args.timeout,
+                    memory=args.memory,
+                    cpus=args.cpus,
+                    scratch_dir=scratch_dir,
+                )
+            except (subprocess.CalledProcessError, OSError) as exc:
+                _report_docker_failure("process", exc)
+                return 2
+            if result.status == STATUS_PASSED:
+                passed += 1
+                print(f"[PASS] {task.id}")
+            else:
+                detail = result.stderr.strip().splitlines()
+                suffix = f": {detail[0]}" if detail else f": {result.status}"
+                print(f"[FAIL] {task.id}{suffix}")
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    failed = len(tasks) - passed
+    print(f"Validated {len(tasks)} task reference solution(s): {passed} passed, {failed} failed.")
+    return 0 if failed == 0 else 1
 
 
 def _doctor_line(label: str, ok: bool, detail: str) -> None:
@@ -497,6 +573,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--task", action="append", help="Show only this task id (repeatable). Default: all."
     )
     ls.set_defaults(func=cmd_list_tasks)
+
+    validate = sub.add_parser(
+        "validate-tasks", help="Run task reference solutions against tests safely in Docker."
+    )
+    validate.add_argument("--tasks", help="Tasks directory to validate instead of auto-discovery.")
+    validate.add_argument(
+        "--task", action="append", help="Validate only this task id (repeatable). Default: all."
+    )
+    validate.add_argument(
+        "--timeout", type=int, default=10, help="Per-test timeout in seconds (default: 10)."
+    )
+    validate.add_argument(
+        "--memory", default="256m", help="Container memory limit (default: 256m)."
+    )
+    validate.add_argument(
+        "--cpus", type=float, default=1.0, help="Container CPU limit (default: 1.0)."
+    )
+    validate.add_argument("--sandbox", help="Directory containing the sandbox Dockerfile.")
+    validate.set_defaults(func=cmd_validate_tasks)
 
     doctor = sub.add_parser(
         "doctor", help="Check install/runtime prerequisites and asset discovery."
