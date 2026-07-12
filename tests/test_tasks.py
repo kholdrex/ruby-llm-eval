@@ -347,13 +347,13 @@ def test_selected_malformed_task_reports_missing_reference_and_test_file(tmp_pat
     assert "has no test file" in message
 
 
-def test_load_task_rejects_unsupported_fixture_directory(tmp_path):
+def test_load_task_accepts_nested_support_tree_for_minitest(tmp_path):
     rails_test = """\
 require "rails/test_help"
 require_relative "solution"
 
 class UserTest < ActiveSupport::TestCase
-  self.fixture_paths = [File.expand_path("fixtures", __dir__)]
+  self.fixture_paths = [File.expand_path("support/fixtures", __dir__)]
   fixtures :users
 
   def test_user_name
@@ -362,17 +362,62 @@ class UserTest < ActiveSupport::TestCase
 end
 """
     task_dir = write_task(tmp_path, "001_private_rails", test=rails_test)
-    fixtures_dir = task_dir / "fixtures"
-    fixtures_dir.mkdir()
+    fixtures_dir = task_dir / "support" / "fixtures"
+    fixtures_dir.mkdir(parents=True)
     (fixtures_dir / "users.yml").write_text("alice:\n  name: Alice\n", encoding="utf-8")
 
-    with pytest.raises(ValueError) as exc_info:
+    task = load_task(task_dir)
+
+    assert task.framework == "minitest"
+    assert task.support_dir == task_dir / "support"
+
+
+def test_load_task_accepts_support_tree_for_rspec(tmp_path):
+    task_dir = write_task(tmp_path, "001_private_rspec")
+    (task_dir / "test.rb").unlink()
+    (task_dir / "spec.rb").write_text('require_relative "solution"\n', encoding="utf-8")
+    (task_dir / "support").mkdir()
+    (task_dir / "support" / "records.json").write_text("[]\n", encoding="utf-8")
+
+    task = load_task(task_dir)
+
+    assert task.framework == "rspec"
+    assert task.support_dir == task_dir / "support"
+
+
+def test_load_task_rejects_undeclared_fixture_directory(tmp_path):
+    task_dir = write_task(tmp_path, "001_private_rails")
+    (task_dir / "fixtures").mkdir()
+
+    with pytest.raises(ValueError, match="unsupported subdirectory: fixtures"):
         load_task(task_dir)
 
-    message = str(exc_info.value)
-    assert "001_private_rails" in message
-    assert "unsupported subdirectory: fixtures" in message
-    assert "sandbox only stages the task test and solution.rb" in message
+
+def test_load_task_rejects_symlink_in_support_tree(tmp_path):
+    task_dir = write_task(tmp_path, "001_private")
+    support = task_dir / "support"
+    support.mkdir()
+    (support / "outside").symlink_to(task_dir / "prompt.md")
+
+    with pytest.raises(ValueError, match="symlink is not allowed: support/outside"):
+        load_task(task_dir)
+
+
+def test_load_task_rejects_unsafe_file_type_in_support_tree(tmp_path):
+    import os
+
+    task_dir = write_task(tmp_path, "001_private")
+    support = task_dir / "support"
+    support.mkdir()
+    fifo = support / "records.pipe"
+    os.mkfifo(fifo)
+    try:
+        with pytest.raises(
+            ValueError, match="unsafe file type is not allowed: support/records.pipe"
+        ):
+            load_task(task_dir)
+    finally:
+        fifo.unlink()
 
 
 def test_task_has_reference_and_test():

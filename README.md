@@ -218,18 +218,28 @@ comparable.
 
 ## Bring your own tasks
 
-This is the headline feature. A task is a directory with three files:
+This is the headline feature. A task has three required files and may include an
+explicitly named `support/` fixture tree:
 
 ```text
 my_private_tasks/
 └── 001_invoice_total/
     ├── prompt.md        # what to build + the exact Ruby signature
     ├── test.rb          # Minitest suite; `require_relative "solution"`
-    └── solution_ref.rb  # reference solution (never shown to the model)
+    ├── solution_ref.rb  # reference solution (never shown to the model)
+    └── support/         # optional test helpers, schemas, and fixture data
 ```
 
 Prefer RSpec? Drop a `spec.rb` (instead of `test.rb`) and it's auto-detected —
 see `tasks/016_stack` for a worked example.
+
+`support/` is copied beside the candidate and test, then exposed only through
+the sandbox's read-only `/work` mount. No other task-local directory is staged:
+undeclared directories, symlinks (including links inside `support/`), and file
+types other than regular files and directories are rejected during discovery.
+This is a task-integrity boundary, not a secrecy boundary: candidate code can
+read every staged support file. Keep solutions, credentials, and hidden scoring
+data out of `support/`; `solution_ref.rb` remains local and is never staged.
 
 Point the tool at any directory. A good workflow is: list the tasks, run an
 offline stub selection check, run the Docker-backed stub provider when Docker is

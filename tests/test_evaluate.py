@@ -127,6 +127,39 @@ def test_run_sample_accepts_nonce_bound_reporter_evidence(tmp_path, monkeypatch,
     assert result.status == STATUS_PASSED
 
 
+@pytest.mark.parametrize("framework,filename", [("minitest", "test.rb"), ("rspec", "spec.rb")])
+def test_run_sample_stages_support_tree_read_only_and_cleans_it(
+    tmp_path, monkeypatch, framework, filename
+):
+    task_dir = tmp_path / "task"
+    fixture = task_dir / "support" / "nested" / "record.json"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text('{"answer":42}\n', encoding="utf-8")
+    task = Task("001_test", task_dir, "prompt", framework, filename, "test source")
+    sample = Sample(0, "def answer = 42", 0, 0)
+    staged_work = None
+
+    def fake_run(cmd, **_kwargs):
+        nonlocal staged_work
+        work_mount = next(arg for arg in cmd if arg.endswith(":/work:ro"))
+        staged_work = type(tmp_path)(work_mount.removesuffix(":/work:ro"))
+        assert (staged_work / "support/nested/record.json").read_text(encoding="utf-8") == (
+            '{"answer":42}\n'
+        )
+        assert (staged_work / "support/nested/record.json").stat().st_mode & 0o777 == 0o644
+        result_mount = next(arg for arg in cmd if arg.endswith(":/rle-result:rw"))
+        nonce = next(arg for arg in cmd if arg.startswith("RLE_RESULT_NONCE=")).partition("=")[2]
+        (type(tmp_path)(result_mount.removesuffix(":/rle-result:rw")) / "result.json").write_text(
+            f'{{"nonce":"{nonce}","test_count":1}}', encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+
+    assert run_sample(task, sample, scratch_dir=tmp_path / "scratch").status == STATUS_PASSED
+    assert staged_work is not None and not staged_work.exists()
+
+
 @pytest.mark.skipif(not _docker_sandbox_ready(), reason="Docker sandbox image unavailable")
 @pytest.mark.parametrize(
     ("framework", "filename", "test_source"),
@@ -136,20 +169,25 @@ def test_run_sample_accepts_nonce_bound_reporter_evidence(tmp_path, monkeypatch,
             "test.rb",
             'require "minitest/autorun"\nrequire_relative "solution"\n'
             "class AnswerTest < Minitest::Test\n"
-            "  def test_answer; assert_equal 42, answer; end\n"
+            '  def test_answer; assert_equal "42", File.read("support/answer.txt").strip; '
+            "assert_equal 42, answer; end\n"
             "end\n",
         ),
         (
             "rspec",
             "spec.rb",
             'require_relative "solution"\nRSpec.describe "answer" do\n'
-            '  it("is 42") { expect(answer).to eq(42) }\nend\n',
+            '  it("is 42") { expect(File.read("support/answer.txt").strip).to eq("42"); '
+            "expect(answer).to eq(42) }\nend\n",
         ),
     ],
 )
 def test_run_sample_executes_generated_framework_reporter(
     tmp_path, framework, filename, test_source
 ):
+    fixture = tmp_path / "support" / "answer.txt"
+    fixture.parent.mkdir(exist_ok=True)
+    fixture.write_text("42\n", encoding="utf-8")
     task = Task("001_test", tmp_path, "prompt", framework, filename, test_source)
     sample = Sample(0, "def answer = 42", 0, 0)
 

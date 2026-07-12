@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add explicitly named task-local `support/` fixture trees, staged in the
+  read-only sandbox mount with strict rejection of other directories, symlinks,
+  and unsafe file types.
+
 - Modernize package license metadata to SPDX and explicit license-file fields,
   avoiding deprecated setuptools metadata during distribution builds.
 - Reject non-string optional task `meta.yml` keys with task/file-specific diagnostics before checking supported metadata key names.

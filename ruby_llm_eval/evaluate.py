@@ -203,6 +203,8 @@ def run_sample(
             else _RSPEC_EVIDENCE_FORMATTER,
             encoding="utf-8",
         )
+        if task.support_dir is not None:
+            shutil.copytree(task.support_dir, work / "support")
 
         # The container runs as a non-root user whose uid differs from the host
         # on native Linux. mkdtemp creates the dir as 0700, so without this the
@@ -212,6 +214,11 @@ def run_sample(
         solution.chmod(0o644)
         test.chmod(0o644)
         reporter.chmod(0o644)
+        support = work / "support"
+        if support.is_dir():
+            for entry in support.rglob("*"):
+                entry.chmod(0o755 if entry.is_dir() else 0o644)
+            support.chmod(0o755)
         result_dir.chmod(0o777)
 
         container = f"rle_{uuid.uuid4().hex[:12]}"

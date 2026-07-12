@@ -6,7 +6,9 @@ A task is a directory named like ``001_fizzbuzz`` containing:
     test.rb          a Minitest suite, OR
     spec.rb          an RSpec suite (use exactly one of test.rb / spec.rb)
     solution_ref.rb  a reference solution (never shown to the model)
+    support/         optional task-local helpers and fixture data
 
+Only the explicitly named support tree is staged with the test and candidate.
 Both test frameworks ``require_relative "solution"``. This is the entire
 contribution surface — adding a task means adding a folder; there is no
 registry to edit.
@@ -15,6 +17,7 @@ registry to edit.
 from __future__ import annotations
 
 import re
+import stat
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +28,7 @@ PROMPT_FILE = "prompt.md"
 REFERENCE_FILE = "solution_ref.rb"
 # Optional per-task metadata (e.g. `category: rails`); absent => general.
 META_FILE = "meta.yml"
+SUPPORT_DIR = "support"
 DEFAULT_CATEGORY = "general"
 SUPPORTED_META_KEYS = {"category"}
 
@@ -53,6 +57,12 @@ class Task:
     test_filename: str  # "test.rb" or "spec.rb"
     test: str
     category: str = DEFAULT_CATEGORY
+
+    @property
+    def support_dir(self) -> Path | None:
+        """Return the validated task-local support tree, when present."""
+        path = self.path / SUPPORT_DIR
+        return path if path.is_dir() else None
 
     def reference(self) -> str:
         """Read the reference solution. Used to self-test tasks and the stub."""
@@ -188,13 +198,23 @@ def _detect_framework(task_dir: Path) -> tuple[tuple[str, str] | None, list[str]
 def _collect_task_file_errors(task_dir: Path) -> tuple[list[str], str | None, str | None]:
     """Collect malformed-file problems before reading task contents."""
     issues: list[str] = []
-    subdirectories = sorted(entry.name for entry in task_dir.iterdir() if entry.is_dir())
+    subdirectories = sorted(
+        entry.name for entry in task_dir.iterdir() if entry.is_dir() and entry.name != SUPPORT_DIR
+    )
     if subdirectories:
         label = "subdirectory" if len(subdirectories) == 1 else "subdirectories"
         issues.append(
             f"unsupported {label}: {', '.join(subdirectories)} "
-            "(the sandbox only stages the task test and solution.rb)"
+            f"(the sandbox only stages {SUPPORT_DIR}/, the task test, and solution.rb)"
         )
+
+    for entry in sorted(task_dir.rglob("*")):
+        relative = entry.relative_to(task_dir)
+        mode = entry.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            issues.append(f"symlink is not allowed: {relative}")
+        elif not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            issues.append(f"unsafe file type is not allowed: {relative}")
 
     for filename in (PROMPT_FILE, REFERENCE_FILE):
         if not (task_dir / filename).is_file():
