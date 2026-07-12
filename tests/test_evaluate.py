@@ -67,6 +67,35 @@ def test_positive_test_summary_with_exit_zero_is_passed(summary):
     assert _classify(0, summary, "", framework) == STATUS_PASSED
 
 
+@pytest.mark.parametrize(
+    ("output", "framework"),
+    [
+        (
+            MINITEST_OK
+            + "\ncandidate noise\n0 runs, 0 assertions, 0 failures, 0 errors, 0 skips\n",
+            MINITEST,
+        ),
+        (RSPEC_OK + "\ncandidate noise\n0 examples, 0 failures\n", RSPEC),
+    ],
+)
+def test_final_zero_summary_overrides_fake_positive(output, framework):
+    assert _classify(0, output, "", framework) == STATUS_ERROR
+
+
+@pytest.mark.parametrize(
+    ("output", "framework"),
+    [
+        (
+            "0 runs, 0 assertions, 0 failures, 0 errors, 0 skips\ncandidate noise\n" + MINITEST_OK,
+            MINITEST,
+        ),
+        ("0 examples, 0 failures\ncandidate noise\n" + RSPEC_OK, RSPEC),
+    ],
+)
+def test_final_positive_summary_overrides_fake_zero(output, framework):
+    assert _classify(0, output, "", framework) == STATUS_PASSED
+
+
 def test_timeout_is_authoritative_even_with_zero_test_summary():
     assert _classify(124, "0 runs, 0 assertions", "", MINITEST) == STATUS_TIMEOUT
 

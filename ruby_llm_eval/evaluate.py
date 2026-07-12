@@ -37,16 +37,22 @@ IMAGE_TAG = "ruby-llm-eval-sandbox:latest"
 FRAMEWORKS = {
     "minitest": {
         "command": ["ruby"],
-        "summary": re.compile(r"(\d+) runs?, \d+ assertions?"),
+        "summary": re.compile(
+            r"^\s*(\d+) runs?, \d+ assertions?, \d+ failures?, \d+ errors?, \d+ skips?\s*$",
+            re.MULTILINE,
+        ),
     },
     "rspec": {
         "command": ["rspec"],
-        "summary": re.compile(r"(\d+) examples?, \d+ failures?"),
+        "summary": re.compile(
+            r"^\s*(\d+) examples?, \d+ failures?(?:, \d+ pending)?\s*$", re.MULTILINE
+        ),
     },
 }
 
 # coreutils `timeout` exits 124 when it has to kill the command.
 _TIMEOUT_EXIT_CODE = 124
+_SUMMARY_NOT_PARSED = object()
 
 STATUS_PASSED = "passed"
 STATUS_FAILED = "failed"
@@ -88,22 +94,39 @@ def ensure_image(dockerfile_dir: Path, image: str = IMAGE_TAG) -> None:
         build_image(dockerfile_dir, image)
 
 
-def _classify(returncode: int, stdout: str, stderr: str, summary_re: re.Pattern) -> str:
+def _parse_test_summary(stdout: str, stderr: str, summary_re: re.Pattern) -> int | None:
+    """Return the test count from the authoritative framework summary.
+
+    Framework runners write their final summary to stdout. Selecting the last
+    complete summary line prevents earlier candidate output from overriding the
+    runner's actual result. Fall back to stderr only when stdout has no summary,
+    rather than inventing an ordering by combining the two streams.
+    """
+    matches = list(summary_re.finditer(stdout))
+    if not matches:
+        matches = list(summary_re.finditer(stderr))
+    return int(matches[-1].group(1)) if matches else None
+
+
+def _classify(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    summary_re: re.Pattern,
+    *,
+    test_count: int | None | object = _SUMMARY_NOT_PARSED,
+) -> str:
     if returncode == _TIMEOUT_EXIT_CODE:
         return STATUS_TIMEOUT
-    summary = summary_re.search(stdout + "\n" + stderr)
-    if summary is None or int(summary.group(1)) == 0:
+    if test_count is _SUMMARY_NOT_PARSED:
+        test_count = _parse_test_summary(stdout, stderr, summary_re)
+    if not isinstance(test_count, int) or test_count == 0:
         return STATUS_ERROR
     return STATUS_PASSED if returncode == 0 else STATUS_FAILED
 
 
-def _test_execution_error(stdout: str, stderr: str, summary_re: re.Pattern) -> str:
-    summary = summary_re.search(stdout + "\n" + stderr)
-    return (
-        "zero tests ran"
-        if summary is not None and int(summary.group(1)) == 0
-        else "test summary missing"
-    )
+def _test_execution_error(test_count: int | None) -> str:
+    return "zero tests ran" if test_count == 0 else "test summary missing"
 
 
 def _docker_cmd(container, image, work, *, timeout, memory, cpus, inner):
@@ -214,10 +237,17 @@ def run_sample(
                 proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr
             )
 
-        status = _classify(proc.returncode, proc.stdout, proc.stderr, framework["summary"])
+        test_count = _parse_test_summary(proc.stdout, proc.stderr, framework["summary"])
+        status = _classify(
+            proc.returncode,
+            proc.stdout,
+            proc.stderr,
+            framework["summary"],
+            test_count=test_count,
+        )
         output = (proc.stdout + proc.stderr).strip()
         if status == STATUS_ERROR:
-            reason = _test_execution_error(proc.stdout, proc.stderr, framework["summary"])
+            reason = _test_execution_error(test_count)
             stderr = f"{reason}\n{output}" if output else reason
         else:
             stderr = "" if status == STATUS_PASSED else output
