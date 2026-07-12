@@ -63,6 +63,7 @@ print(json.dumps({
     "selected_task_count": len(selected_tasks),
     "selected_task": selected_tasks[0].id,
     "selected_task_uses_active_record": "ActiveRecord::Base" in selected_tasks[0].reference(),
+    "selected_task_support": (selected_tasks[0].support_dir / "manifest.yml").read_text(),
     "version": read_version(tasks_dir),
 }))
 """
@@ -94,5 +95,6 @@ print(json.dumps({
     assert payload["selected_task_count"] == 1
     assert payload["selected_task"] == "017_ar_scopes"
     assert payload["selected_task_uses_active_record"] is True
+    assert payload["selected_task_support"] == "schema: support-fixture-smoke\n"
     expected_version = (REPO_ROOT / "tasks" / "VERSION").read_text(encoding="utf-8").strip()
     assert payload["version"] == expected_version
