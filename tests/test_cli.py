@@ -850,6 +850,51 @@ def test_offline_stub_rejects_style_without_checking_docker(monkeypatch):
     assert rc == 2
 
 
+@pytest.mark.parametrize(
+    ("option", "value", "message"),
+    [
+        ("--timeout", "0", "--timeout must be >= 1"),
+        ("--cpus", "0", "--cpus must be > 0"),
+        ("--cpus", "nan", "--cpus must be > 0"),
+        ("--memory", "", "--memory must be a positive integer"),
+        ("--memory", "0", "--memory must be a positive integer"),
+        ("--memory", "256mb", "--memory must be a positive integer"),
+        ("--memory", " 256m ", "--memory must be a positive integer"),
+        ("--jobs", "0", "--jobs must be >= 1"),
+    ],
+)
+def test_run_rejects_invalid_sandbox_limits_before_docker(
+    option, value, message, monkeypatch, capsys
+):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: pytest.fail("Docker was checked"))
+    rc = main(["run", "--model", "stub", option, value])
+
+    assert rc == 2
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "message"),
+    [
+        ("--timeout", "-1", "--timeout must be >= 1"),
+        ("--cpus", "-0.5", "--cpus must be > 0"),
+        ("--memory", "", "--memory must be a positive integer"),
+    ],
+)
+def test_validate_tasks_rejects_invalid_sandbox_limits_before_discovery(
+    option, value, message, monkeypatch, capsys
+):
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "find_tasks_dir", lambda *_args: pytest.fail("tasks were discovered"))
+    rc = main(["validate-tasks", option, value])
+
+    assert rc == 2
+    assert message in capsys.readouterr().err
+
+
 def test_offline_stub_requires_stub_provider_and_model(monkeypatch):
     import ruby_llm_eval.cli as cli
 

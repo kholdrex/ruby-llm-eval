@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -44,6 +46,23 @@ DOCKER_INFO_TIMEOUT_SECONDS = 5
 
 def _eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
+
+
+def _validate_sandbox_limits(args: argparse.Namespace) -> bool:
+    """Reject invalid Docker limits before provider loading or Docker setup."""
+    if args.timeout < 1:
+        _eprint(f"Error: --timeout must be >= 1 (got {args.timeout}).")
+        return False
+    if not math.isfinite(args.cpus) or args.cpus <= 0:
+        _eprint(f"Error: --cpus must be > 0 (got {args.cpus}).")
+        return False
+    if not re.fullmatch(r"[1-9]\d*[bkmg]?", args.memory, re.IGNORECASE):
+        _eprint(
+            f"Error: --memory must be a positive integer with optional b/k/m/g suffix "
+            f"(got {args.memory!r})."
+        )
+        return False
+    return True
 
 
 def _report_docker_failure(stage: str, exc: subprocess.CalledProcessError | OSError) -> None:
@@ -121,6 +140,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.offline_stub and (args.provider != "stub" or args.model != "stub"):
         _eprint("Error: --offline-stub requires --provider stub --model stub.")
         return 2
+    if not args.offline_stub and not _validate_sandbox_limits(args):
+        return 2
 
     if args.offline_stub:
         config_dir = None
@@ -137,7 +158,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.k < 1 or args.k > args.n:
         _eprint(f"Error: -k must be between 1 and -n/--samples ({args.n}); got {args.k}.")
         return 2
-    jobs = max(1, args.jobs)
+    if args.jobs < 1:
+        _eprint(f"Error: --jobs must be >= 1 (got {args.jobs}).")
+        return 2
+    jobs = args.jobs
 
     tasks_dir = find_tasks_dir(args.tasks)
     tasks = discover_tasks(tasks_dir, only=args.task or None)
@@ -302,6 +326,8 @@ def cmd_list_tasks(args: argparse.Namespace) -> int:
 
 def cmd_validate_tasks(args: argparse.Namespace) -> int:
     """Run task reference solutions against their tests in the Docker sandbox."""
+    if not _validate_sandbox_limits(args):
+        return 2
     tasks_dir = find_tasks_dir(args.tasks)
     tasks = discover_tasks(tasks_dir, only=args.task or None)
     if not docker_available():
