@@ -187,6 +187,60 @@ def test_validate_tasks_requires_docker_before_build(tmp_path, monkeypatch, caps
     )
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        subprocess.CalledProcessError(1, ["docker", "build"], stderr="daemon unavailable"),
+        OSError("docker executable could not be launched"),
+    ],
+)
+def test_validate_tasks_reports_image_setup_failures_as_usage_errors(
+    tmp_path, monkeypatch, capsys, failure
+):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+
+    def fail_setup(_sandbox):
+        raise failure
+
+    monkeypatch.setattr(cli, "ensure_image", fail_setup)
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Error: Docker sandbox setup failed:" in captured.err
+    detail = failure.stderr if isinstance(failure, subprocess.CalledProcessError) else str(failure)
+    assert detail in captured.err
+
+
+def test_validate_tasks_reports_sandbox_process_launch_failure_as_usage_error(
+    tmp_path, monkeypatch, capsys
+):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+
+    def fail_launch(*_args, **_kwargs):
+        raise OSError("cannot start docker process")
+
+    monkeypatch.setattr(cli, "run_sample", fail_launch)
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Error: Docker sandbox process failed:" in captured.err
+    assert "cannot start docker process" in captured.err
+    assert "Validated" not in captured.out
+
+
 def test_doctor_reports_healthy_install(tmp_path, monkeypatch, capsys):
     tasks_dir = tmp_path / "tasks"
     write_private_task(tasks_dir, "001_private_add", "add")

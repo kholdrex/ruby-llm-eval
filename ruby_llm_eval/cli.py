@@ -46,6 +46,18 @@ def _eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
 
 
+def _report_docker_failure(stage: str, exc: subprocess.CalledProcessError | OSError) -> None:
+    """Print a concise diagnostic for Docker client/build launch failures."""
+    detail = ""
+    if isinstance(exc, subprocess.CalledProcessError):
+        output = exc.stderr or exc.stdout
+        if output:
+            detail = str(output).strip()
+    if not detail:
+        detail = str(exc)
+    _eprint(f"Error: Docker sandbox {stage} failed: {detail}")
+
+
 def _process_sample(task, sample, *, timeout, memory, cpus, scratch_dir, rubocop_config):
     """Evaluate a sample for correctness and, if requested, RuboCop style."""
     result = run_sample(
@@ -162,7 +174,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         _eprint(f"Building/locating sandbox image {IMAGE_TAG} ...")
-        ensure_image(find_sandbox_dir(args.sandbox, strict_explicit=True))
+        try:
+            ensure_image(find_sandbox_dir(args.sandbox, strict_explicit=True))
+        except (subprocess.CalledProcessError, OSError) as exc:
+            _report_docker_failure("setup", exc)
+            return 2
 
     out_root = Path(args.output)
     samples_dir = out_root / safe_model_dir(args.model)
@@ -200,16 +216,20 @@ def cmd_run(args: argparse.Namespace) -> int:
             if offline_stub:
                 pairs = _evaluate_stub_samples(task, samples)
             else:
-                pairs = _evaluate_samples(
-                    task,
-                    samples,
-                    timeout=args.timeout,
-                    memory=args.memory,
-                    cpus=args.cpus,
-                    scratch_dir=scratch_dir,
-                    jobs=jobs,
-                    rubocop_config=rubocop_config,
-                )
+                try:
+                    pairs = _evaluate_samples(
+                        task,
+                        samples,
+                        timeout=args.timeout,
+                        memory=args.memory,
+                        cpus=args.cpus,
+                        scratch_dir=scratch_dir,
+                        jobs=jobs,
+                        rubocop_config=rubocop_config,
+                    )
+                except (subprocess.CalledProcessError, OSError) as exc:
+                    _report_docker_failure("process", exc)
+                    return 2
             results = [result for result, _ in pairs]
             offenses = [offense for _, offense in pairs] if args.style else None
             summary = summarize_task(
@@ -291,7 +311,11 @@ def cmd_validate_tasks(args: argparse.Namespace) -> int:
         )
         return 2
 
-    ensure_image(find_sandbox_dir(args.sandbox, strict_explicit=True))
+    try:
+        ensure_image(find_sandbox_dir(args.sandbox, strict_explicit=True))
+    except (subprocess.CalledProcessError, OSError) as exc:
+        _report_docker_failure("setup", exc)
+        return 2
     # Keep scratch under the current directory so Docker Desktop can bind-mount
     # it, but make it unique so cleanup can never remove a user's existing path.
     scratch_dir = Path(tempfile.mkdtemp(prefix=".ruby-llm-eval-validation-", dir=Path.cwd()))
@@ -299,14 +323,18 @@ def cmd_validate_tasks(args: argparse.Namespace) -> int:
     try:
         for task in tasks:
             sample = Sample(index=0, code=task.reference(), input_tokens=0, output_tokens=0)
-            result = run_sample(
-                task,
-                sample,
-                timeout=args.timeout,
-                memory=args.memory,
-                cpus=args.cpus,
-                scratch_dir=scratch_dir,
-            )
+            try:
+                result = run_sample(
+                    task,
+                    sample,
+                    timeout=args.timeout,
+                    memory=args.memory,
+                    cpus=args.cpus,
+                    scratch_dir=scratch_dir,
+                )
+            except (subprocess.CalledProcessError, OSError) as exc:
+                _report_docker_failure("process", exc)
+                return 2
             if result.status == STATUS_PASSED:
                 passed += 1
                 print(f"[PASS] {task.id}")
