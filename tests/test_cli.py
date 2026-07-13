@@ -270,6 +270,31 @@ def test_validate_tasks_reports_sandbox_process_launch_failure_as_usage_error(
     assert "Validated" not in captured.out
 
 
+def test_validate_tasks_reports_sandbox_process_timeout_as_usage_error(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private_add", "add")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox: None)
+
+    def time_out(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(["docker", "create"], 9)
+
+    monkeypatch.setattr(cli, "run_sample", time_out)
+    rc = main(["validate-tasks", "--tasks", str(tasks_dir)])
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Error: Docker sandbox process failed:" in captured.err
+    assert "timed out after 9 seconds" in captured.err
+    assert "Validated" not in captured.out
+
+
 def test_validate_tasks_maps_docker_run_exit_125_to_infrastructure_error(
     tmp_path, monkeypatch, capsys
 ):
@@ -810,6 +835,47 @@ def test_stub_provider_model_without_offline_stub_uses_docker(tmp_path, monkeypa
 
     assert rc == 0
     assert calls == {"docker_available": 1, "ensure_image": 1, "run_sample": 1}
+
+
+def test_run_reports_sandbox_process_timeout_as_usage_error(tmp_path, monkeypatch, capsys):
+    tasks_dir = tmp_path / "tasks"
+    write_private_task(tasks_dir, "001_private", "add")
+
+    sandbox_dir = tmp_path / "sandbox"
+    sandbox_dir.mkdir()
+    (sandbox_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+
+    import ruby_llm_eval.cli as cli
+
+    monkeypatch.setattr(cli, "docker_available", lambda: True)
+    monkeypatch.setattr(cli, "ensure_image", lambda _sandbox_dir: None)
+
+    def time_out(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(["docker", "start"], 9)
+
+    monkeypatch.setattr(cli, "run_sample", time_out)
+    rc = main(
+        [
+            "run",
+            "--model",
+            "stub",
+            "--provider",
+            "stub",
+            "--tasks",
+            str(tasks_dir),
+            "--sandbox",
+            str(sandbox_dir),
+            "--output",
+            str(tmp_path / "results"),
+            "-n",
+            "1",
+        ]
+    )
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Error: Docker sandbox process failed:" in captured.err
+    assert "timed out after 9 seconds" in captured.err
 
 
 def test_run_fails_when_explicit_sandbox_path_is_missing(tmp_path, monkeypatch, capsys):
