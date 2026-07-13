@@ -660,6 +660,8 @@ def _validate_test_contents(task_dir: Path, test_filename: str, test_contents: s
 
 def load_task(task_dir: Path) -> Task:
     """Load a task directory, validating required files exist and are non-empty."""
+    if task_dir.is_symlink():
+        raise ValueError(f"Task directory symlink is not allowed: {task_dir.name}")
     _validate_task_directory_id(task_dir)
 
     file_errors, framework, test_filename = _collect_task_file_errors(task_dir)
