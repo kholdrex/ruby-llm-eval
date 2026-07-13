@@ -7,7 +7,8 @@
   16 KiB-bounded regular-file/non-symlink validator after execution. The trusted
   exporter runs under a distinct privileged UID with Ruby startup hooks disabled;
   exporter termination is contained to the sample, and result containers are
-  unconditionally removed without masking primary test or infrastructure failures.
+  unconditionally removed, with cleanup failures surfaced as infrastructure errors
+  while retaining the primary test result or infrastructure failure as context.
   Sandbox containers also drop all Linux capabilities and enforce
   `no-new-privileges`; candidate-triggerable PID-exhaustion exporter startup
   failures are contained to the affected sample.

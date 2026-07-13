@@ -34,12 +34,14 @@ class DockerSandbox:
         export_returncode=0,
         failures=(),
         exec_timeout=False,
+        rm_timeout=False,
     ):
         self.evidence = evidence
         self.exec_returncode = exec_returncode
         self.export_returncode = export_returncode
         self.failures = set(failures)
         self.exec_timeout = exec_timeout
+        self.rm_timeout = rm_timeout
         self.calls = []
         self.state = None
         self.container = None
@@ -165,6 +167,8 @@ class DockerSandbox:
 
         if operation == "rm":
             assert cmd == ["docker", "rm", "-f", self.container]
+            if self.rm_timeout:
+                raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
             result = self._result(cmd, operation)
             if result.returncode == 0:
                 self.state = "removed"
@@ -415,7 +419,7 @@ def test_exec_docker_exit_125_is_infrastructure_error(tmp_path, monkeypatch):
 
 
 def test_unexpected_exporter_exit_is_sample_error_and_container_is_removed(tmp_path, monkeypatch):
-    docker = DockerSandbox(export_returncode=137, failures={"rm"})
+    docker = DockerSandbox(export_returncode=137)
     monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", docker)
 
     result = run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
@@ -443,7 +447,7 @@ def test_reserved_export_docker_failure_is_infrastructure_error_and_cleans_up(
 
 
 def test_export_exit_126_is_sample_error_and_container_is_removed(tmp_path, monkeypatch):
-    docker = DockerSandbox(export_returncode=126, failures={"rm"})
+    docker = DockerSandbox(export_returncode=126)
     monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", docker)
 
     result = run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
@@ -534,26 +538,45 @@ def test_rm_failure_after_success_is_infrastructure_error(tmp_path, monkeypatch)
     ("evidence", "exec_returncode", "expected"),
     [("malformed", 0, STATUS_ERROR), ("valid", 1, STATUS_FAILED)],
 )
-def test_rm_failure_does_not_mask_primary_test_failure(
+def test_rm_failure_surfaces_with_primary_test_result_context(
     tmp_path, monkeypatch, evidence, exec_returncode, expected
 ):
     docker = DockerSandbox(evidence=evidence, exec_returncode=exec_returncode, failures={"rm"})
     monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", docker)
 
-    result = run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
 
-    assert result.status == expected
+    assert exc_info.value.cmd == ["docker", "rm", "-f", docker.container]
+    primary_result = exc_info.value.__dict__["primary_result"]
+    assert primary_result.status == expected
+    assert "candidate output" in primary_result.stderr
 
 
-def test_rm_failure_does_not_mask_primary_infrastructure_failure(tmp_path, monkeypatch):
+def test_rm_failure_surfaces_with_primary_infrastructure_failure_as_context(tmp_path, monkeypatch):
     docker = DockerSandbox(failures={"export", "rm"})
     monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", docker)
 
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
 
-    assert exc_info.value.cmd[:4] == ["docker", "exec", "--user", "0:0"]
-    assert exc_info.value.stderr == b"export failed"
+    assert exc_info.value.cmd == ["docker", "rm", "-f", docker.container]
+    assert isinstance(exc_info.value.__context__, subprocess.CalledProcessError)
+    assert exc_info.value.__context__.cmd[:4] == ["docker", "exec", "--user", "0:0"]
+    assert exc_info.value.__context__.stderr == b"export failed"
+
+
+def test_rm_timeout_surfaces_with_primary_timeout_result_context(tmp_path, monkeypatch):
+    docker = DockerSandbox(exec_timeout=True, rm_timeout=True)
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", docker)
+
+    with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert exc_info.value.cmd == ["docker", "rm", "-f", docker.container]
+    primary_result = exc_info.value.__dict__["primary_result"]
+    assert primary_result.status == STATUS_TIMEOUT
+    assert primary_result.stderr == "host-side timeout"
 
 
 def test_support_tree_is_staged_read_only_and_cleaned(tmp_path, monkeypatch):
@@ -600,7 +623,7 @@ def test_missing_summary_reason_precedes_bounded_candidate_output(tmp_path, monk
 
 
 def test_result_export_timeout_is_error_and_container_is_removed(tmp_path, monkeypatch):
-    docker = DockerSandbox(failures={"rm"})
+    docker = DockerSandbox()
 
     def timeout_export(cmd, **kwargs):
         if DockerSandbox._is_export(cmd):

@@ -316,7 +316,7 @@ def run_sample(
     work = Path(tempfile.mkdtemp(prefix="rle_", dir=str(scratch_root))).resolve()
     container = None
     container_creation_attempted = False
-    primary_failure = False
+    primary_result = None
     try:
         solution = work / "solution.rb"
         test = work / task.test_filename
@@ -378,7 +378,6 @@ def run_sample(
             timeout=15,
         )
         if create_proc.returncode != 0:
-            primary_failure = True
             raise subprocess.CalledProcessError(
                 create_proc.returncode,
                 create_cmd,
@@ -394,7 +393,6 @@ def run_sample(
             timeout=15,
         )
         if start_proc.returncode != 0:
-            primary_failure = True
             raise subprocess.CalledProcessError(
                 start_proc.returncode,
                 start_cmd,
@@ -412,14 +410,15 @@ def run_sample(
                 timeout=timeout + 15,
             )
         except subprocess.TimeoutExpired:
-            primary_failure = True
-            return SampleResult(task.id, sample.index, STATUS_TIMEOUT, "host-side timeout")
+            primary_result = SampleResult(
+                task.id, sample.index, STATUS_TIMEOUT, "host-side timeout"
+            )
+            return primary_result
 
         # Docker reserves 125 for client/daemon failures. ``docker exec`` also
         # propagates the test command's status, so 126 and 127 must be judged
         # using framework evidence like any other non-zero test exit.
         if proc.returncode == 125:
-            primary_failure = True
             raise subprocess.CalledProcessError(
                 proc.returncode, exec_cmd, output=proc.stdout, stderr=proc.stderr
             )
@@ -448,17 +447,14 @@ def run_sample(
         except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
             pass
         status = _classify(proc.returncode, test_count)
-        primary_failure = status != STATUS_PASSED
         output = (proc.stdout + proc.stderr).strip()
         if status == STATUS_ERROR:
             reason = evidence_error or _test_execution_error(test_count)
             stderr = f"{reason}\n{output}" if output else reason
         else:
             stderr = "" if status == STATUS_PASSED else output
-        return SampleResult(task.id, sample.index, status, stderr[:4000])
-    except BaseException:
-        primary_failure = True
-        raise
+        primary_result = SampleResult(task.id, sample.index, status, stderr[:4000])
+        return primary_result
     finally:
         cleanup_error = None
         if container_creation_attempted and container is not None:
@@ -481,7 +477,12 @@ def run_sample(
                 cleanup_error = exc
         shutil.rmtree(work, ignore_errors=True)
 
-        if cleanup_error is not None and not primary_failure:
+        if cleanup_error is not None:
+            # A pending return has no exception context for Python to retain, so
+            # preserve its result directly on the cleanup failure. If evaluation
+            # raised, normal exception chaining keeps that failure as context.
+            if primary_result is not None:
+                cleanup_error.__dict__["primary_result"] = primary_result
             raise cleanup_error
 
 
