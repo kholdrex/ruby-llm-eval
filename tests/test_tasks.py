@@ -49,8 +49,10 @@ def test_only_filter():
 def test_discover_tasks_rejects_task_directory_symlink_before_reading_files(
     tmp_path, monkeypatch, only
 ):
+    tasks_root = tmp_path / "tasks"
+    tasks_root.mkdir()
     target = write_task(tmp_path / "outside", "target")
-    (tmp_path / "001_link").symlink_to(target, target_is_directory=True)
+    (tasks_root / "001_link").symlink_to(target, target_is_directory=True)
 
     def fail_read(*args, **kwargs):
         pytest.fail("task files must not be read through a task directory symlink")
@@ -58,7 +60,7 @@ def test_discover_tasks_rejects_task_directory_symlink_before_reading_files(
     monkeypatch.setattr(Path, "read_text", fail_read)
 
     with pytest.raises(ValueError, match="Task directory symlink is not allowed: 001_link"):
-        discover_tasks(tmp_path, only=only)
+        discover_tasks(tasks_root, only=only)
 
 
 def test_unknown_task_id_raises():
