@@ -315,7 +315,7 @@ def run_sample(
     # output dir (hence scratch_dir) is often a relative path like "results".
     work = Path(tempfile.mkdtemp(prefix="rle_", dir=str(scratch_root))).resolve()
     container = None
-    container_creation_attempted = False
+    container_cleanup_required = False
     primary_result = None
     try:
         solution = work / "solution.rb"
@@ -370,13 +370,18 @@ def run_sample(
             env={"RLE_RESULT_FILE": "/rle-result/result.json", "RLE_RESULT_NONCE": nonce},
         )
 
-        container_creation_attempted = True
-        create_proc = subprocess.run(
-            create_cmd,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
+        try:
+            create_proc = subprocess.run(
+                create_cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            # The daemon may have created the named container before the client
+            # timed out, so cleanup is still required for this ambiguous case.
+            container_cleanup_required = True
+            raise
         if create_proc.returncode != 0:
             raise subprocess.CalledProcessError(
                 create_proc.returncode,
@@ -384,6 +389,7 @@ def run_sample(
                 output=create_proc.stdout,
                 stderr=create_proc.stderr,
             )
+        container_cleanup_required = True
 
         start_cmd = ["docker", "start", container]
         start_proc = subprocess.run(
@@ -457,7 +463,7 @@ def run_sample(
         return primary_result
     finally:
         cleanup_error = None
-        if container_creation_attempted and container is not None:
+        if container_cleanup_required and container is not None:
             cleanup_cmd = ["docker", "rm", "-f", container]
             try:
                 cleanup_proc = subprocess.run(
@@ -466,7 +472,16 @@ def run_sample(
                     text=True,
                     timeout=15,
                 )
-                if cleanup_proc.returncode != 0:
+                stderr = cleanup_proc.stderr
+                if isinstance(stderr, bytes):
+                    stderr = stderr.decode(errors="replace")
+                missing_container = (
+                    cleanup_proc.args == cleanup_cmd
+                    and isinstance(stderr, str)
+                    and stderr.strip()
+                    == f"Error response from daemon: No such container: {container}"
+                )
+                if cleanup_proc.returncode != 0 and not missing_container:
                     cleanup_error = subprocess.CalledProcessError(
                         cleanup_proc.returncode,
                         cleanup_cmd,

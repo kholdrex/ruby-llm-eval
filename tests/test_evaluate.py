@@ -33,6 +33,7 @@ class DockerSandbox:
         exec_returncode=0,
         export_returncode=0,
         failures=(),
+        create_timeout=False,
         exec_timeout=False,
         rm_timeout=False,
     ):
@@ -40,6 +41,7 @@ class DockerSandbox:
         self.exec_returncode = exec_returncode
         self.export_returncode = export_returncode
         self.failures = set(failures)
+        self.create_timeout = create_timeout
         self.exec_timeout = exec_timeout
         self.rm_timeout = rm_timeout
         self.calls = []
@@ -112,6 +114,11 @@ class DockerSandbox:
             }
             mount = next(arg for arg in cmd if arg.endswith(":/work:ro"))
             self.work = Path(mount.removesuffix(":/work:ro"))
+            if self.create_timeout:
+                # The daemon completed creation, but the client never received
+                # its response, leaving the outcome ambiguous to run_sample.
+                self.state = "created"
+                raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
             result = self._result(cmd, operation)
             if result.returncode == 0:
                 self.state = "created"
@@ -412,7 +419,7 @@ def test_zero_test_evidence_has_specific_error(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("operation", ["create", "start", "exec", "export"])
-def test_docker_lifecycle_failure_is_infrastructure_error_and_container_is_removed(
+def test_docker_lifecycle_failure_is_infrastructure_error_and_created_container_is_removed(
     tmp_path, monkeypatch, operation
 ):
     docker = DockerSandbox(failures={operation})
@@ -429,12 +436,105 @@ def test_docker_lifecycle_failure_is_infrastructure_error_and_container_is_remov
         actual_stderr = actual_stderr.decode()
     assert actual_stderr == expected_stderr
     prefixes = {
-        "create": ["create", "rm"],
+        "create": ["create"],
         "start": ["create", "start", "rm"],
         "exec": ["create", "start", "exec", "rm"],
         "export": ["create", "start", "exec", "export", "rm"],
     }
     assert docker.operations == prefixes[operation]
+
+
+def test_create_failure_is_not_masked_by_cleanup_for_a_container_that_does_not_exist(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        if cmd[1] == "create":
+            return subprocess.CompletedProcess(cmd, 1, "", "create failed")
+        if cmd[1] == "rm":
+            return subprocess.CompletedProcess(
+                cmd, 1, "", "Error response from daemon: No such container"
+            )
+        raise AssertionError(f"unexpected Docker command: {cmd}")
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert exc_info.value.cmd[1] == "create"
+    assert exc_info.value.stderr == "create failed"
+    assert [cmd[1] for cmd in calls] == ["create"]
+
+
+def test_ambiguous_create_timeout_still_attempts_container_cleanup(tmp_path, monkeypatch):
+    docker = DockerSandbox(create_timeout=True)
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", docker)
+
+    with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert exc_info.value.cmd[1] == "create"
+    assert docker.operations == ["create", "rm"]
+
+
+def test_create_timeout_is_preserved_when_cleanup_reports_container_absent(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[1] == "create":
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        if cmd[1] == "rm":
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                "",
+                f"Error response from daemon: No such container: {cmd[-1]}\n",
+            )
+        raise AssertionError(f"unexpected Docker command: {cmd}")
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+
+    with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert exc_info.value.cmd[1] == "create"
+    assert [cmd[1] for cmd in calls] == ["create", "rm"]
+
+
+def test_create_timeout_cleanup_absence_plus_another_error_surfaces_cleanup_failure(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[1] == "create":
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        if cmd[1] == "rm":
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                "",
+                (
+                    f"Error response from daemon: No such container: {cmd[-1]}\n"
+                    "another cleanup error\n"
+                ),
+            )
+        raise AssertionError(f"unexpected Docker command: {cmd}")
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert exc_info.value.cmd[1] == "rm"
+    assert exc_info.value.stderr.endswith("another cleanup error\n")
+    assert isinstance(exc_info.value.__context__, subprocess.TimeoutExpired)
+    assert [cmd[1] for cmd in calls] == ["create", "rm"]
 
 
 def test_exec_docker_exit_125_is_infrastructure_error(tmp_path, monkeypatch):
