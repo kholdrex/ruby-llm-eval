@@ -374,18 +374,31 @@ def test_missing_or_invalid_evidence_is_a_test_execution_error(tmp_path, monkeyp
     assert docker.operations == ["create", "start", "exec", "export", "rm"]
 
 
-@pytest.mark.parametrize("evidence", ["deeply_nested", "overlong_integer"])
-def test_json_parser_limit_errors_are_invalid_evidence(tmp_path, monkeypatch, evidence):
-    docker = DockerSandbox(evidence=evidence)
+@pytest.mark.parametrize("parser_error", [RecursionError, ValueError])
+def test_json_parser_limit_errors_are_invalid_evidence(tmp_path, monkeypatch, parser_error):
+    docker = DockerSandbox()
     monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", docker)
+
+    def raise_parser_error(_payload):
+        raise parser_error("parser limit reached")
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.json.loads", raise_parser_error)
 
     result = run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
 
-    assert isinstance(docker.tmpfs_result, str)
-    assert len(docker.tmpfs_result.encode()) <= _RESULT_MAX_BYTES
     assert result.status == STATUS_ERROR
     assert result.stderr.startswith("test summary missing")
     assert docker.operations == ["create", "start", "exec", "export", "rm"]
+
+
+@pytest.mark.parametrize("evidence", ["deeply_nested", "overlong_integer"])
+def test_parser_limit_evidence_fixtures_fit_export_limit(evidence):
+    docker = DockerSandbox(evidence=evidence)
+
+    docker._write_tmpfs_evidence()
+
+    assert isinstance(docker.tmpfs_result, str)
+    assert len(docker.tmpfs_result.encode()) <= _RESULT_MAX_BYTES
 
 
 def test_zero_test_evidence_has_specific_error(tmp_path, monkeypatch):
