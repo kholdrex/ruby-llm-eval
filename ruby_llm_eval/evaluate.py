@@ -444,7 +444,7 @@ def run_sample(
                 and value >= 0
             ):
                 test_count = value
-        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+        except (ValueError, RecursionError, AttributeError):
             pass
         status = _classify(proc.returncode, test_count)
         output = (proc.stdout + proc.stderr).strip()

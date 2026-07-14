@@ -76,6 +76,10 @@ class DockerSandbox:
             self.tmpfs_result = '{"nonce":"wrong","test_count":2}'
         elif self.evidence == "malformed":
             self.tmpfs_result = "not json"
+        elif self.evidence == "deeply_nested":
+            self.tmpfs_result = "[" * 1_100 + "]" * 1_100
+        elif self.evidence == "overlong_integer":
+            self.tmpfs_result = "1" * 5_000
         elif self.evidence == "missing":
             self.tmpfs_result = None
         else:
@@ -367,6 +371,20 @@ def test_missing_or_invalid_evidence_is_a_test_execution_error(tmp_path, monkeyp
         "result evidence rejected" if evidence == "missing" else "test summary missing"
     )
     assert result.stderr.startswith(expected_reason)
+    assert docker.operations == ["create", "start", "exec", "export", "rm"]
+
+
+@pytest.mark.parametrize("evidence", ["deeply_nested", "overlong_integer"])
+def test_json_parser_limit_errors_are_invalid_evidence(tmp_path, monkeypatch, evidence):
+    docker = DockerSandbox(evidence=evidence)
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", docker)
+
+    result = run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert isinstance(docker.tmpfs_result, str)
+    assert len(docker.tmpfs_result.encode()) <= _RESULT_MAX_BYTES
+    assert result.status == STATUS_ERROR
+    assert result.stderr.startswith("test summary missing")
     assert docker.operations == ["create", "start", "exec", "export", "rm"]
 
 
