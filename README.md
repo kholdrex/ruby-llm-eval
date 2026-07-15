@@ -338,10 +338,12 @@ between candidate code and the test process: both execute in the same container
 and can access it.
 
 The normal runner is non-root and needs no capabilities. The evidence exporter
-runs as UID 0 only so candidate processes cannot signal it; it likewise has no
-capabilities. Because UID 0 can bypass normal DAC read permission bits, evidence
-safety does not rely on file modes: the exporter uses `NOFOLLOW` and `NONBLOCK`,
-checks the opened descriptor with `fstat`, enforces the size limit, and validates
+runs as capability-free UID 0 only so candidate processes cannot signal it.
+Because `--cap-drop ALL` removes `CAP_DAC_OVERRIDE` and `CAP_DAC_READ_SEARCH`, it
+does not generally bypass normal file read permissions; hostile unreadable
+permission changes can therefore make the sample error. Evidence integrity does
+not rely on file mode alone: the exporter uses `NOFOLLOW` and `NONBLOCK`, checks
+the opened descriptor's type with `fstat`, enforces the size limit, and validates
 the per-run nonce after parsing.
 
 ## Roadmap

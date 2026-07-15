@@ -17,6 +17,7 @@ from ruby_llm_eval.evaluate import (
     _classify,
     _docker_create_cmd,
     _export_result_evidence,
+    _is_missing_container_error,
     run_sample,
 )
 from ruby_llm_eval.generate import Sample
@@ -478,6 +479,24 @@ def test_ambiguous_create_timeout_still_attempts_container_cleanup(tmp_path, mon
 
     assert exc_info.value.cmd[1] == "create"
     assert docker.operations == ["create", "rm"]
+
+
+def test_missing_container_error_accepts_bytes():
+    assert _is_missing_container_error(
+        b"Error response from daemon: No such container: rle-test\n", "rle-test"
+    )
+
+
+def test_missing_container_error_rejects_mismatched_container_name():
+    assert not _is_missing_container_error(
+        "Error response from daemon: No such container: another-container",
+        "rle-test",
+    )
+
+
+@pytest.mark.parametrize("stderr", [None, 17, object()])
+def test_missing_container_error_rejects_none_and_non_strings(stderr):
+    assert not _is_missing_container_error(stderr, "rle-test")
 
 
 @pytest.mark.parametrize(
