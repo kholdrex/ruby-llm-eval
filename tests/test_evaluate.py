@@ -201,13 +201,29 @@ def _sample(index=0):
 def _docker_sandbox_ready():
     if shutil.which("docker") is None:
         return False
-    daemon = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
-    if daemon.returncode != 0:
+    try:
+        daemon = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
+        if daemon.returncode != 0:
+            return False
+        image = subprocess.run(
+            ["docker", "image", "inspect", IMAGE_TAG], capture_output=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
         return False
-    image = subprocess.run(
-        ["docker", "image", "inspect", IMAGE_TAG], capture_output=True, timeout=5
-    )
     return image.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "error", [OSError("docker unavailable"), subprocess.TimeoutExpired(["docker", "info"], 5)]
+)
+def test_docker_sandbox_ready_returns_false_when_docker_info_fails(monkeypatch, error):
+    monkeypatch.setattr(shutil, "which", lambda _command: "/usr/bin/docker")
+
+    def fail(_command, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    assert not _docker_sandbox_ready()
 
 
 @pytest.mark.parametrize(
