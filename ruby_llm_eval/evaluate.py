@@ -23,6 +23,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,8 @@ _RESULT_EXPORT_TIMEOUT = 5
 _RESULT_EXPORT_REJECTED = 65
 _RESULT_EXPORT_INFRA_EXIT_CODES = frozenset({125, 127})
 _RESULT_EXPORT_RUBY_BINARY = "/usr/local/bin/ruby"
+_CREATE_TIMEOUT_CLEANUP_ATTEMPTS = 11
+_CREATE_TIMEOUT_CLEANUP_INTERVAL = 0.5
 
 # Do not use ``docker cp`` here. Its archive extraction can materialize an
 # attacker-controlled symlink on the host before host-side validation gets a
@@ -330,6 +333,7 @@ def run_sample(
     work = Path(tempfile.mkdtemp(prefix="rle_", dir=str(scratch_root))).resolve()
     container = None
     container_cleanup_required = False
+    create_outcome_ambiguous = False
     primary_result = None
     try:
         solution = work / "solution.rb"
@@ -395,6 +399,7 @@ def run_sample(
             # The daemon may have created the named container before the client
             # timed out, so cleanup is still required for this ambiguous case.
             container_cleanup_required = True
+            create_outcome_ambiguous = True
             raise
         if create_proc.returncode != 0:
             raise subprocess.CalledProcessError(
@@ -480,23 +485,33 @@ def run_sample(
         if container_cleanup_required and container is not None:
             cleanup_cmd = ["docker", "rm", "-f", container]
             try:
-                cleanup_proc = subprocess.run(
-                    cleanup_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                )
-                missing_container = (
-                    cleanup_proc.args == cleanup_cmd
-                    and _is_missing_container_error(cleanup_proc.stderr, container)
-                )
-                if cleanup_proc.returncode != 0 and not missing_container:
-                    cleanup_error = subprocess.CalledProcessError(
-                        cleanup_proc.returncode,
+                attempts = _CREATE_TIMEOUT_CLEANUP_ATTEMPTS if create_outcome_ambiguous else 1
+                for attempt in range(attempts):
+                    cleanup_proc = subprocess.run(
                         cleanup_cmd,
-                        output=cleanup_proc.stdout,
-                        stderr=cleanup_proc.stderr,
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
                     )
+                    missing_container = (
+                        cleanup_proc.args == cleanup_cmd
+                        and _is_missing_container_error(cleanup_proc.stderr, container)
+                    )
+                    if cleanup_proc.returncode != 0 and not missing_container:
+                        cleanup_error = subprocess.CalledProcessError(
+                            cleanup_proc.returncode,
+                            cleanup_cmd,
+                            output=cleanup_proc.stdout,
+                            stderr=cleanup_proc.stderr,
+                        )
+                        break
+                    if not missing_container:
+                        break
+                    # A timed-out create request can still be in flight in the
+                    # daemon. Reconcile for a bounded grace period so a late
+                    # named container is removed without retrying forever.
+                    if attempt + 1 < attempts:
+                        time.sleep(_CREATE_TIMEOUT_CLEANUP_INTERVAL)
             except BaseException as exc:
                 cleanup_error = exc
         shutil.rmtree(work, ignore_errors=True)

@@ -481,6 +481,39 @@ def test_ambiguous_create_timeout_still_attempts_container_cleanup(tmp_path, mon
     assert docker.operations == ["create", "rm"]
 
 
+def test_create_timeout_reconciles_container_created_after_initial_missing_probe(
+    tmp_path, monkeypatch
+):
+    calls = []
+    rm_attempts = 0
+
+    def fake_run(cmd, **kwargs):
+        nonlocal rm_attempts
+        calls.append(cmd)
+        if cmd[1] == "create":
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        if cmd[1] == "rm":
+            rm_attempts += 1
+            if rm_attempts == 1:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    1,
+                    "",
+                    f"Error response from daemon: No such container: {cmd[-1]}",
+                )
+            return subprocess.CompletedProcess(cmd, 0, cmd[-1], "")
+        raise AssertionError(f"unexpected Docker command: {cmd}")
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+    monkeypatch.setattr("ruby_llm_eval.evaluate.time.sleep", lambda _seconds: None)
+
+    with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert exc_info.value.cmd[1] == "create"
+    assert [cmd[1] for cmd in calls] == ["create", "rm", "rm"]
+
+
 def test_missing_container_error_accepts_bytes():
     assert _is_missing_container_error(
         b"Error response from daemon: No such container: rle-test\n", "rle-test"
@@ -526,12 +559,13 @@ def test_create_timeout_is_preserved_when_cleanup_reports_container_absent(
         raise AssertionError(f"unexpected Docker command: {cmd}")
 
     monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+    monkeypatch.setattr("ruby_llm_eval.evaluate.time.sleep", lambda _seconds: None)
 
     with pytest.raises(subprocess.TimeoutExpired) as exc_info:
         run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
 
     assert exc_info.value.cmd[1] == "create"
-    assert [cmd[1] for cmd in calls] == ["create", "rm"]
+    assert [cmd[1] for cmd in calls] == ["create", *("rm",) * 11]
 
 
 def test_create_timeout_cleanup_absence_plus_another_error_surfaces_cleanup_failure(
