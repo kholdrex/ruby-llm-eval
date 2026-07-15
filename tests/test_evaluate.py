@@ -480,7 +480,17 @@ def test_ambiguous_create_timeout_still_attempts_container_cleanup(tmp_path, mon
     assert docker.operations == ["create", "rm"]
 
 
-def test_create_timeout_is_preserved_when_cleanup_reports_container_absent(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "cleanup_stderr",
+    [
+        "Error response from daemon: No such container",
+        "Error response from daemon: No such container: {container}\n",
+        "No such container: {container}",
+    ],
+)
+def test_create_timeout_is_preserved_when_cleanup_reports_container_absent(
+    tmp_path, monkeypatch, cleanup_stderr
+):
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -492,7 +502,7 @@ def test_create_timeout_is_preserved_when_cleanup_reports_container_absent(tmp_p
                 cmd,
                 1,
                 "",
-                f"Error response from daemon: No such container: {cmd[-1]}\n",
+                cleanup_stderr.format(container=cmd[-1]),
             )
         raise AssertionError(f"unexpected Docker command: {cmd}")
 

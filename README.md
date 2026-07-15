@@ -339,8 +339,10 @@ and can access it.
 
 The normal runner is non-root and needs no capabilities. The evidence exporter
 runs as UID 0 only so candidate processes cannot signal it; it likewise has no
-capabilities and reads the normally permissioned result file through standard
-DAC access (hostile permission changes simply make that sample error).
+capabilities. Because UID 0 can bypass normal DAC read permission bits, evidence
+safety does not rely on file modes: the exporter uses `NOFOLLOW` and `NONBLOCK`,
+checks the opened descriptor with `fstat`, enforces the size limit, and validates
+the per-run nonce after parsing.
 
 ## Roadmap
 

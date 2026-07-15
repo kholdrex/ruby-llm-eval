@@ -83,6 +83,20 @@ end
 """
 
 
+def _is_missing_container_error(stderr: str | bytes | None, container: str) -> bool:
+    """Recognize only Docker's benign response when ``rm -f`` finds no container."""
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+    if not isinstance(stderr, str):
+        return False
+
+    message = stderr.strip()
+    daemon_prefix = "Error response from daemon: "
+    if message.startswith(daemon_prefix):
+        message = message.removeprefix(daemon_prefix)
+    return message in {"No such container", f"No such container: {container}"}
+
+
 _MINITEST_EVIDENCE_REPORTER = r"""require "json"
 require "minitest"
 
@@ -472,14 +486,9 @@ def run_sample(
                     text=True,
                     timeout=15,
                 )
-                stderr = cleanup_proc.stderr
-                if isinstance(stderr, bytes):
-                    stderr = stderr.decode(errors="replace")
                 missing_container = (
                     cleanup_proc.args == cleanup_cmd
-                    and isinstance(stderr, str)
-                    and stderr.strip()
-                    == f"Error response from daemon: No such container: {container}"
+                    and _is_missing_container_error(cleanup_proc.stderr, container)
                 )
                 if cleanup_proc.returncode != 0 and not missing_container:
                     cleanup_error = subprocess.CalledProcessError(
