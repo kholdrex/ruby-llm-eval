@@ -48,6 +48,7 @@ _RESULT_EXPORT_INFRA_EXIT_CODES = frozenset({125, 127})
 _RESULT_EXPORT_RUBY_BINARY = "/usr/local/bin/ruby"
 _CREATE_TIMEOUT_CLEANUP_ATTEMPTS = 11
 _CREATE_TIMEOUT_CLEANUP_INTERVAL = 0.5
+_CONTAINER_CLEANUP_BUDGET = 5.0
 
 # Do not use ``docker cp`` here. Its archive extraction can materialize an
 # attacker-controlled symlink on the host before host-side validation gets a
@@ -484,14 +485,18 @@ def run_sample(
         cleanup_error = None
         if container_cleanup_required and container is not None:
             cleanup_cmd = ["docker", "rm", "-f", container]
+            cleanup_deadline = time.monotonic() + _CONTAINER_CLEANUP_BUDGET
             try:
                 attempts = _CREATE_TIMEOUT_CLEANUP_ATTEMPTS if create_outcome_ambiguous else 1
                 for attempt in range(attempts):
+                    remaining_budget = cleanup_deadline - time.monotonic()
+                    if remaining_budget <= 0:
+                        break
                     cleanup_proc = subprocess.run(
                         cleanup_cmd,
                         capture_output=True,
                         text=True,
-                        timeout=15,
+                        timeout=remaining_budget,
                     )
                     missing_container = (
                         cleanup_proc.args == cleanup_cmd
@@ -511,7 +516,10 @@ def run_sample(
                     # daemon. Reconcile for a bounded grace period so a late
                     # named container is removed without retrying forever.
                     if attempt + 1 < attempts:
-                        time.sleep(_CREATE_TIMEOUT_CLEANUP_INTERVAL)
+                        remaining_budget = cleanup_deadline - time.monotonic()
+                        if remaining_budget <= 0:
+                            break
+                        time.sleep(min(_CREATE_TIMEOUT_CLEANUP_INTERVAL, remaining_budget))
             except BaseException as exc:
                 cleanup_error = exc
         shutil.rmtree(work, ignore_errors=True)

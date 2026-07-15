@@ -530,6 +530,77 @@ def test_create_timeout_reconciles_container_created_after_initial_missing_probe
     assert [cmd[1] for cmd in calls] == ["create", "rm", "rm"]
 
 
+def test_create_timeout_cleanup_caps_each_attempt_to_remaining_budget(tmp_path, monkeypatch):
+    now = 0.0
+    cleanup_timeouts = []
+
+    def monotonic():
+        return now
+
+    def sleep(seconds):
+        nonlocal now
+        now += seconds
+
+    def fake_run(cmd, **kwargs):
+        nonlocal now
+        if cmd[1] == "create":
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        if cmd[1] == "rm":
+            cleanup_timeouts.append(kwargs["timeout"])
+            if len(cleanup_timeouts) == 1:
+                now += 1.25
+                return subprocess.CompletedProcess(
+                    cmd, 1, "", f"Error response from daemon: No such container: {cmd[-1]}"
+                )
+            return subprocess.CompletedProcess(cmd, 0, cmd[-1], "")
+        raise AssertionError(f"unexpected Docker command: {cmd}")
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+    monkeypatch.setattr("ruby_llm_eval.evaluate.time.monotonic", monotonic)
+    monkeypatch.setattr("ruby_llm_eval.evaluate.time.sleep", sleep)
+
+    with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert exc_info.value.cmd[1] == "create"
+    assert cleanup_timeouts == pytest.approx([5.0, 3.25])
+
+
+def test_create_timeout_cleanup_stops_when_wall_clock_budget_is_elapsed(tmp_path, monkeypatch):
+    now = 0.0
+    cleanup_timeouts = []
+
+    def monotonic():
+        return now
+
+    def sleep(seconds):
+        nonlocal now
+        now += seconds
+
+    def fake_run(cmd, **kwargs):
+        nonlocal now
+        if cmd[1] == "create":
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        if cmd[1] == "rm":
+            cleanup_timeouts.append(kwargs["timeout"])
+            now += 4.75
+            return subprocess.CompletedProcess(
+                cmd, 1, "", f"Error response from daemon: No such container: {cmd[-1]}"
+            )
+        raise AssertionError(f"unexpected Docker command: {cmd}")
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+    monkeypatch.setattr("ruby_llm_eval.evaluate.time.monotonic", monotonic)
+    monkeypatch.setattr("ruby_llm_eval.evaluate.time.sleep", sleep)
+
+    with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert exc_info.value.cmd[1] == "create"
+    assert cleanup_timeouts == pytest.approx([5.0])
+    assert now == pytest.approx(5.0)
+
+
 def test_missing_container_error_accepts_bytes():
     assert _is_missing_container_error(
         b"Error response from daemon: No such container: rle-test\n", "rle-test"
