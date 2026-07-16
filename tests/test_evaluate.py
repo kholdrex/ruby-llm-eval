@@ -17,7 +17,7 @@ from ruby_llm_eval.evaluate import (
     _classify,
     _docker_create_cmd,
     _export_result_evidence,
-    _is_missing_container_error,
+    _is_benign_container_cleanup_error,
     run_sample,
 )
 from ruby_llm_eval.generate import Sample
@@ -95,7 +95,8 @@ class DockerSandbox:
         if operation == "create":
             assert self.state is None
             assert kwargs["timeout"] == 15
-            assert cmd[-3:] == ["tail", "-f", "/dev/null"]
+            assert cmd[-2:] == ["sleep", "70"]
+            assert "--rm" in cmd
             self.container = cmd[cmd.index("--name") + 1]
             assert re.fullmatch(r"rle_[0-9a-f]{32}", self.container)
             assert "/rle-result:size=1m" in [
@@ -245,13 +246,14 @@ def test_docker_create_uses_locked_down_tmpfs_without_writable_result_mount(tmp_
         "rle_0123456789abcdef0123456789abcdef",
         IMAGE_TAG,
         tmp_path,
+        timeout=17,
         memory="256m",
         cpus=1.0,
     )
 
     assert cmd[:2] == ["docker", "create"]
-    assert cmd[-3:] == ["tail", "-f", "/dev/null"]
-    assert "--rm" not in cmd
+    assert cmd[-2:] == ["sleep", "77"]
+    assert "--rm" in cmd
     assert [cmd[index + 1] for index, arg in enumerate(cmd) if arg == "--cap-drop"] == ["ALL"]
     assert [cmd[index + 1] for index, arg in enumerate(cmd) if arg == "--security-opt"] == [
         "no-new-privileges"
@@ -603,22 +605,30 @@ def test_create_timeout_cleanup_stops_when_wall_clock_budget_is_elapsed(tmp_path
     assert now == pytest.approx(5.0)
 
 
-def test_missing_container_error_accepts_bytes():
-    assert _is_missing_container_error(
+def test_benign_container_cleanup_error_accepts_bytes():
+    assert _is_benign_container_cleanup_error(
         b"Error response from daemon: No such container: rle-test\n", "rle-test"
     )
 
 
-def test_missing_container_error_rejects_mismatched_container_name():
-    assert not _is_missing_container_error(
+@pytest.mark.parametrize(
+    "stderr",
+    [
         "Error response from daemon: No such container: another-container",
-        "rle-test",
-    )
+        "Error response from daemon: removal of container another-container is already in progress",
+        (
+            "Error response from daemon: removal of container rle-test is already in progress\n"
+            "another cleanup error"
+        ),
+    ],
+)
+def test_benign_container_cleanup_error_rejects_mismatched_name_or_message(stderr):
+    assert not _is_benign_container_cleanup_error(stderr, "rle-test")
 
 
 @pytest.mark.parametrize("stderr", [None, 17, object()])
-def test_missing_container_error_rejects_none_and_non_strings(stderr):
-    assert not _is_missing_container_error(stderr, "rle-test")
+def test_benign_container_cleanup_error_rejects_none_and_non_strings(stderr):
+    assert not _is_benign_container_cleanup_error(stderr, "rle-test")
 
 
 @pytest.mark.parametrize(
@@ -815,6 +825,68 @@ def test_rm_failure_after_success_is_infrastructure_error(tmp_path, monkeypatch)
 
     assert exc_info.value.cmd == ["docker", "rm", "-f", docker.container]
     assert exc_info.value.stderr == "rm failed"
+
+
+@pytest.mark.parametrize(
+    "cleanup_stderr",
+    [
+        "Error response from daemon: No such container: {container}",
+        "Error response from daemon: removal of container {container} is already in progress",
+    ],
+)
+def test_benign_auto_remove_cleanup_race_preserves_primary_result(
+    tmp_path, monkeypatch, cleanup_stderr
+):
+    docker = DockerSandbox()
+
+    def fake_run(cmd, **kwargs):
+        proc = docker(cmd, **kwargs)
+        if cmd[1] == "rm":
+            return subprocess.CompletedProcess(
+                cmd, 1, "", cleanup_stderr.format(container=docker.container)
+            )
+        return proc
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+
+    result = run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert result.status == STATUS_PASSED
+    assert docker.operations == ["create", "start", "exec", "export", "rm"]
+
+
+@pytest.mark.parametrize(
+    "cleanup_stderr",
+    [
+        "Error response from daemon: No such container: another-container",
+        "Error response from daemon: removal of container another-container is already in progress",
+        (
+            "Error response from daemon: removal of container {container} is already in progress\n"
+            "another cleanup error"
+        ),
+    ],
+)
+def test_nonexact_auto_remove_cleanup_message_remains_an_error(
+    tmp_path, monkeypatch, cleanup_stderr
+):
+    docker = DockerSandbox()
+
+    def fake_run(cmd, **kwargs):
+        proc = docker(cmd, **kwargs)
+        if cmd[1] == "rm":
+            return subprocess.CompletedProcess(
+                cmd, 1, "", cleanup_stderr.format(container=docker.container)
+            )
+        return proc
+
+    monkeypatch.setattr("ruby_llm_eval.evaluate.subprocess.run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+        run_sample(_task(tmp_path), _sample(), scratch_dir=tmp_path / "scratch")
+
+    assert exc_info.value.cmd == ["docker", "rm", "-f", docker.container]
+    assert exc_info.value.stderr == cleanup_stderr.format(container=docker.container)
+    assert exc_info.value.__dict__["primary_result"].status == STATUS_PASSED
 
 
 @pytest.mark.parametrize(

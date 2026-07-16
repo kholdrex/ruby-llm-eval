@@ -49,6 +49,7 @@ _RESULT_EXPORT_RUBY_BINARY = "/usr/local/bin/ruby"
 _CREATE_TIMEOUT_CLEANUP_ATTEMPTS = 11
 _CREATE_TIMEOUT_CLEANUP_INTERVAL = 0.5
 _CONTAINER_CLEANUP_BUDGET = 5.0
+_CONTAINER_KEEPALIVE_GRACE = 60
 
 # Do not use ``docker cp`` here. Its archive extraction can materialize an
 # attacker-controlled symlink on the host before host-side validation gets a
@@ -87,8 +88,8 @@ end
 """
 
 
-def _is_missing_container_error(stderr: str | bytes | None, container: str) -> bool:
-    """Recognize only Docker's benign response when ``rm -f`` finds no container."""
+def _is_benign_container_cleanup_error(stderr: str | bytes | None, container: str) -> bool:
+    """Recognize exact Docker responses when auto-removal made cleanup redundant."""
     if isinstance(stderr, bytes):
         stderr = stderr.decode(errors="replace")
     if not isinstance(stderr, str):
@@ -98,7 +99,11 @@ def _is_missing_container_error(stderr: str | bytes | None, container: str) -> b
     daemon_prefix = "Error response from daemon: "
     if message.startswith(daemon_prefix):
         message = message.removeprefix(daemon_prefix)
-    return message in {"No such container", f"No such container: {container}"}
+    return message in {
+        "No such container",
+        f"No such container: {container}",
+        f"removal of container {container} is already in progress",
+    }
 
 
 _MINITEST_EVIDENCE_REPORTER = r"""require "json"
@@ -289,18 +294,21 @@ def _docker_cmd(
     ]
 
 
-def _docker_create_cmd(container, image, work, *, memory, cpus, env=None):
+def _docker_create_cmd(container, image, work, *, timeout, memory, cpus, env=None):
     """Build a sandbox container that stays alive while evidence is exported."""
     # The test is launched separately with ``docker exec`` so the result tmpfs
-    # remains mounted for validated export after the test command exits.
+    # remains mounted for validated export after the test command exits. Bound
+    # the keepalive and enable auto-removal so a hard-killed harness cannot leave
+    # a running sandbox behind indefinitely; explicit cleanup remains the normal
+    # path and tolerates a container that has already expired.
     return [
         "docker",
         "create",
+        "--rm",
         *_docker_sandbox_options(container, work, memory=memory, cpus=cpus, env=env),
         image,
-        "tail",
-        "-f",
-        "/dev/null",
+        "sleep",
+        str(timeout + _CONTAINER_KEEPALIVE_GRACE),
     ]
 
 
@@ -384,6 +392,7 @@ def run_sample(
             container,
             image,
             work,
+            timeout=timeout,
             memory=memory,
             cpus=cpus,
             env={"RLE_RESULT_FILE": "/rle-result/result.json", "RLE_RESULT_NONCE": nonce},
@@ -498,11 +507,11 @@ def run_sample(
                         text=True,
                         timeout=remaining_budget,
                     )
-                    missing_container = (
+                    benign_cleanup = (
                         cleanup_proc.args == cleanup_cmd
-                        and _is_missing_container_error(cleanup_proc.stderr, container)
+                        and _is_benign_container_cleanup_error(cleanup_proc.stderr, container)
                     )
-                    if cleanup_proc.returncode != 0 and not missing_container:
+                    if cleanup_proc.returncode != 0 and not benign_cleanup:
                         cleanup_error = subprocess.CalledProcessError(
                             cleanup_proc.returncode,
                             cleanup_cmd,
@@ -510,7 +519,7 @@ def run_sample(
                             stderr=cleanup_proc.stderr,
                         )
                         break
-                    if not missing_container:
+                    if not benign_cleanup:
                         break
                     # A timed-out create request can still be in flight in the
                     # daemon. Reconcile for a bounded grace period so a late
