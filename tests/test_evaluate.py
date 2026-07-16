@@ -295,6 +295,8 @@ def test_export_command_uses_distinct_uid_fixed_ruby_and_sanitized_startup(monke
 
 
 def _run_export_helper(path):
+    if shutil.which("ruby") is None:
+        pytest.skip("Ruby executable unavailable")
     return subprocess.run(
         ["ruby", "-e", _RESULT_EXPORT_RUBY, str(path), str(_RESULT_MAX_BYTES)],
         capture_output=True,
