@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Isolate Docker test-result evidence in a size-capped container-local tmpfs,
+  keep the sandbox running while exporting only `result.json` through a timed,
+  16 KiB-bounded regular-file/non-symlink validator after execution. The trusted
+  exporter runs under a distinct privileged UID with Ruby startup hooks disabled;
+  exporter termination is contained to the sample, and result containers are
+  unconditionally removed, with cleanup failures surfaced as infrastructure errors
+  while retaining the primary test result or infrastructure failure as context.
+  A bounded, auto-removing keepalive also prevents a hard-killed harness from
+  leaving a sandbox running indefinitely.
+  Sandbox containers also drop all Linux capabilities and enforce
+  `no-new-privileges`; candidate-triggerable PID-exhaustion exporter startup
+  failures are contained to the affected sample.
 - Add explicitly named task-local `support/` fixture trees, staged in the
   read-only sandbox mount with strict rejection of other directories, symlinks,
   and unsafe file types.

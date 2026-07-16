@@ -65,7 +65,7 @@ def _validate_sandbox_limits(args: argparse.Namespace) -> bool:
     return True
 
 
-def _report_docker_failure(stage: str, exc: subprocess.CalledProcessError | OSError) -> None:
+def _report_docker_failure(stage: str, exc: subprocess.SubprocessError | OSError) -> None:
     """Print a concise diagnostic for Docker client/build launch failures."""
     detail = ""
     if isinstance(exc, subprocess.CalledProcessError):
@@ -251,7 +251,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         jobs=jobs,
                         rubocop_config=rubocop_config,
                     )
-                except (subprocess.CalledProcessError, OSError) as exc:
+                except (subprocess.SubprocessError, OSError) as exc:
                     _report_docker_failure("process", exc)
                     return 2
             results = [result for result, _ in pairs]
@@ -363,7 +363,7 @@ def cmd_validate_tasks(args: argparse.Namespace) -> int:
                     cpus=args.cpus,
                     scratch_dir=scratch_dir,
                 )
-            except (subprocess.CalledProcessError, OSError) as exc:
+            except (subprocess.SubprocessError, OSError) as exc:
                 _report_docker_failure("process", exc)
                 return 2
             if result.status == STATUS_PASSED:

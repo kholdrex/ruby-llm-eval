@@ -319,10 +319,32 @@ Model-generated code is never run on your host. Every sample executes in a
 Docker container started with:
 
 - `--network none` — no network access
+- `--cap-drop ALL` and `--security-opt no-new-privileges` — no Linux
+  capabilities or privilege escalation
 - a read-only bind mount of the code
+- a size-capped, container-local tmpfs for test-result evidence; no writable
+  host result path is mounted, and the container stays running while evidence
+  is exported before it is removed
 - a non-root user inside the image
 - `--memory` / `--cpus` / `--pids-limit` caps
 - a per-test timeout (default 10s), enforced both inside and outside the container
+
+The result tmpfs isolates the host filesystem from result writes and bounds
+their storage. Export reads only `result.json`, under a strict timeout, through
+a trusted helper that uses a non-following/nonblocking open, verifies the opened
+descriptor is a regular file, and limits evidence to 16 KiB before JSON parsing;
+other tmpfs contents are never exported. The tmpfs is not a tamper-proof boundary
+between candidate code and the test process: both execute in the same container
+and can access it.
+
+The normal runner is non-root and needs no capabilities. The evidence exporter
+runs as capability-free UID 0 only so candidate processes cannot signal it.
+Because `--cap-drop ALL` removes `CAP_DAC_OVERRIDE` and `CAP_DAC_READ_SEARCH`, it
+does not generally bypass normal file read permissions; hostile unreadable
+permission changes can therefore make the sample error. Evidence integrity does
+not rely on file mode alone: the exporter uses `NOFOLLOW` and `NONBLOCK`, checks
+the opened descriptor's type with `fstat`, enforces the size limit, and validates
+the per-run nonce after parsing.
 
 ## Roadmap
 

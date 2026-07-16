@@ -6,6 +6,10 @@
 # or controllers (ActionPack + rack-test).
 FROM ruby:3.3-slim
 
+# Image contract: the trusted evidence exporter bypasses PATH and invokes this
+# root-owned binary directly with Ruby startup hooks disabled.
+RUN test -x /usr/local/bin/ruby
+
 # Build tools are needed to compile native gem extensions (e.g. prism, a RuboCop
 # dependency); we remove them afterwards to keep the image lean. The sqlite3 gem
 # ships a precompiled platform build with a vendored SQLite, so no system
