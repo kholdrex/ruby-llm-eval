@@ -151,6 +151,8 @@ class SampleResult:
     index: int
     status: str
     stderr: str = ""
+    stdout: str = ""
+    returncode: int | None = None
 
 
 def docker_available() -> bool:
@@ -488,7 +490,9 @@ def run_sample(
             stderr = f"{reason}\n{output}" if output else reason
         else:
             stderr = "" if status == STATUS_PASSED else output
-        primary_result = SampleResult(task.id, sample.index, status, stderr[:4000])
+        primary_result = SampleResult(
+            task.id, sample.index, status, stderr[:4000], proc.stdout, proc.returncode
+        )
         return primary_result
     finally:
         cleanup_error = None

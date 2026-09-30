@@ -154,6 +154,16 @@ You'll get a live per-task readout, plus two files in `results/`:
 - `run_<timestamp>.json` — full machine-readable report (reproducible).
 - `run_<timestamp>.md` — a markdown table you can paste into an issue or README.
 
+Each invocation also creates a unique `results/runs/<run_id>/` directory with
+task snapshots, the prompt template, a manifest, generated samples, original
+response text, and individual evaluation outcomes. The JSON report's
+`artifacts_dir` locates this directory relative to the report. Repeated runs
+preserve earlier samples; interrupted runs retain the completed requests.
+The manifest records **requested** generation settings; sample metadata records
+sent settings, response model identifiers, stop reasons, and provider token usage.
+Omitted provider settings have unknown defaults. A frozen sandbox image and
+verified model-specific accounting are still needed for a complete research record.
+
 ### Try the bundled tasks with no API key
 
 The same `stub` provider works against the bundled task set if you want to watch
@@ -275,7 +285,10 @@ prompt. The full copy-paste walkthrough for authoring a task is in
 
 Out of the box you can target any **OpenAI-compatible** endpoint (OpenAI,
 OpenRouter, Together, Groq, vLLM, Ollama, LM Studio, …) and the **Anthropic**
-Messages API. Adding a new one is usually a single entry in
+Messages API. The `gemini` provider uses Google's
+[OpenAI-compatible endpoint](https://ai.google.dev/gemini-api/docs/openai)
+with `GEMINI_API_KEY`; model-specific settings need a smoke test before a
+larger run. Adding a new one is usually a single entry in
 [`configs/providers.yaml`](configs/providers.yaml); a genuinely new API shape
 is one small adapter class. See
 [CONTRIBUTING.md → Adding a provider](CONTRIBUTING.md#adding-a-provider).
@@ -292,8 +305,8 @@ is one small adapter class. See
 ```
 
 - **Generation** — for each task, sample N completions at the chosen
-  temperature, strip code fences, and save them under `results/<model>/<task>/`
-  with token metadata.
+  temperature, strip code fences, and save them with token metadata under
+  `results/runs/<run_id>/samples/<model>/<task>/`.
 - **Evaluation** — write each candidate as `solution.rb` next to the task's
   `test.rb` (or `spec.rb`) and run it in a throwaway Docker container. Each
   sample gets a status: `passed`, `failed`, `timeout`, or `error`.

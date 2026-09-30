@@ -7,6 +7,21 @@
 # Used by ruby_llm_eval/report.py to turn token counts into a dollar estimate.
 
 models:
+  # Standard pricing verified 2026-09-24 in official model documentation.
+  gpt-6-luna:
+    input: 0.1
+    output: 0.5
+    input_cache_write: 0.125
+  claude-sonnet-5:
+    input: 2.0
+    output: 10.0
+
+  # Google standard text pricing, verified 2026-09-24:
+  # https://ai.google.dev/gemini-api/docs/pricing
+  gemini-3.5-flash-lite:
+    input: 0.3
+    output: 2.5
+
   stub:
     input: 0.0
     output: 0.0
@@ -23,6 +38,10 @@ models:
     output: 5.0
 
   # OpenAI
+  # Verified 2026-09-24: https://developers.openai.com/api/docs/models/gpt-4.1-mini
+  gpt-4.1-mini-2025-04-14:
+    input: 0.4
+    output: 1.6
   gpt-4o:
     input: 2.5
     output: 10.0

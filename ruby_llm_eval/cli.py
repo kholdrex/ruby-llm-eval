@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import os
 import re
@@ -10,8 +12,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
@@ -34,8 +38,8 @@ from .evaluate import (
     run_rubocop,
     run_sample,
 )
-from .generate import Sample, generate_for_task, safe_model_dir
-from .model_client import build_client
+from .generate import PROMPT_TEMPLATE, Sample, generate_for_task, safe_model_dir
+from .model_client import DEFAULT_MAX_TOKENS, build_client
 from .report import build_report, summarize_task, write_reports
 from .tasks import discover_tasks, read_version
 
@@ -155,6 +159,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.n < 1:
         _eprint(f"Error: -n/--samples must be >= 1 (got {args.n}).")
         return 2
+    if args.max_tokens < 1:
+        _eprint("Error: --max-tokens must be >= 1.")
+        return 2
     if args.k < 1 or args.k > args.n:
         _eprint(f"Error: -k must be between 1 and -n/--samples ({args.n}); got {args.k}.")
         return 2
@@ -205,11 +212,56 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 2
 
     out_root = Path(args.output)
-    samples_dir = out_root / safe_model_dir(args.model)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    run_id = f"{timestamp}_{uuid.uuid4().hex[:8]}"
+    run_dir = out_root / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    samples_dir = run_dir / "samples" / safe_model_dir(args.model)
+    # Preserve the exact evaluation inputs before generation starts. A task-set
+    # version alone cannot identify edits to a private or uncommitted task set.
+    snapshot_root = run_dir / "tasks"
+    task_hashes = {}
+    for task in tasks:
+        shutil.copytree(task.path, snapshot_root / task.id)
+        for path in sorted((snapshot_root / task.id).rglob("*")):
+            if path.is_file():
+                key = path.relative_to(snapshot_root).as_posix()
+                task_hashes[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (run_dir / "prompt_template.txt").write_text(PROMPT_TEMPLATE, encoding="utf-8")
+    tasks = discover_tasks(snapshot_root)
+    manifest = {
+        "run_id": run_id,
+        "started_at_utc": timestamp,
+        "state": "started",
+        "package_version": __version__,
+        "python_version": sys.version,
+        "provider": args.provider,
+        "model": args.model,
+        "task_set_version": task_set_version,
+        "task_sha256": task_hashes,
+        "requested_temperature": args.temperature,
+        "requested_max_tokens": args.max_tokens,
+        "n": args.n,
+        "k": args.k,
+        "timeout_seconds": args.timeout,
+        "memory": args.memory,
+        "cpus": args.cpus,
+        "jobs": jobs,
+        "evaluation_mode": "offline_stub" if offline_stub else "sandbox",
+        "pricing": pricing.get(args.model),
+        "limitations": [
+            "Response metadata records sent settings; provider defaults can remain unknown.",
+            "The sandbox image tag is mutable; freeze its digest before research runs.",
+        ],
+    }
+    if rubocop_config:
+        (run_dir / "rubocop.yml").write_text(rubocop_config, encoding="utf-8")
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     # Sandbox scratch lives inside the output tree so container runtimes can
     # bind-mount it (Docker Desktop does not share the system temp dir). Create
     # it once up front so parallel workers don't race on first creation.
-    scratch_dir = out_root / ".sandbox"
+    scratch_dir = run_dir / ".sandbox"
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -233,6 +285,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 n=args.n,
                 temperature=args.temperature,
                 out_dir=samples_dir,
+                max_tokens=args.max_tokens,
             )
             total_input += sum(s.input_tokens for s in samples)
             total_output += sum(s.output_tokens for s in samples)
@@ -256,6 +309,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                     return 2
             results = [result for result, _ in pairs]
             offenses = [offense for _, offense in pairs] if args.style else None
+            # Keep individual outcomes and diagnostics, not only aggregate scores.
+            (samples_dir / task.id / "evaluations.json").write_text(
+                json.dumps(
+                    [{**asdict(result), "style_offenses": offense} for result, offense in pairs],
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
             summary = summarize_task(
                 task.id, results, args.n, args.k, style_offenses=offenses, category=task.category
             )
@@ -268,7 +329,6 @@ def cmd_run(args: argparse.Namespace) -> int:
                 line += f"  clean {style['clean_rate'] * 100:4.0f}%"
             _eprint(line)
 
-        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
         report = build_report(
             model=args.model,
             provider=args.provider,
@@ -286,9 +346,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             evaluation_mode="offline_stub" if offline_stub else "sandbox",
             sandboxed=not offline_stub,
         )
-        json_path, md_path = write_reports(report, out_root, timestamp)
+        report["run_id"] = run_id
+        report["artifacts_dir"] = run_dir.relative_to(out_root).as_posix()
+        json_path, md_path = write_reports(report, out_root, run_id)
+        manifest["state"] = "completed"
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
+        if manifest["state"] != "completed":
+            manifest["state"] = "interrupted"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     overall = report["overall_pass_at_k"]
     cost = report["cost"]
@@ -555,6 +621,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--temperature", type=float, default=0.2, help="Sampling temperature (default: 0.2)."
+    )
+    run.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_MAX_TOKENS,
+        help="Requested output token limit per completion (default: 1024).",
     )
     run.add_argument(
         "--timeout", type=int, default=10, help="Per-test timeout in seconds (default: 10)."

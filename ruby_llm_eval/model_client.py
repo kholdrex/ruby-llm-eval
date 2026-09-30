@@ -57,7 +57,7 @@ def _post_json(url: str, headers: dict[str, str], payload: dict) -> dict:
         raise ModelError(f"Request to {url} failed: {exc.reason}") from exc
 
 
-def _post_chat(url: str, headers: dict[str, str], payload: dict) -> dict:
+def _post_chat(url: str, headers: dict[str, str], payload: dict, *, allow_fallback=True) -> dict:
     """POST a chat payload, retrying without ``temperature`` if rejected.
 
     Some models (e.g. reasoning models, Claude Opus 4.8) do not accept a custom
@@ -65,16 +65,28 @@ def _post_chat(url: str, headers: dict[str, str], payload: dict) -> dict:
     the field and retry once so the model's default sampling is used.
     """
     try:
-        return _post_json(url, headers, payload)
+        body = _post_json(url, headers, payload)
     except ModelError as exc:
         message = str(exc).lower()
         rejected = "temperature" in message and (
             "400" in message or "unsupported" in message or "deprecated" in message
         )
-        if rejected and "temperature" in payload:
+        if allow_fallback and rejected and "temperature" in payload:
             payload = {k: v for k, v in payload.items() if k != "temperature"}
-            return _post_json(url, headers, payload)
-        raise
+            body = _post_json(url, headers, payload)
+        else:
+            raise
+    # Record what was actually sent, without request headers or credentials.
+    body["_evaluation_request"] = {
+        "temperature_sent": payload.get("temperature"),
+        "temperature_omitted": "temperature" not in payload,
+        "max_tokens": payload.get("max_tokens"),
+        "max_completion_tokens": payload.get("max_completion_tokens"),
+        "reasoning_effort": payload.get("reasoning_effort"),
+        "thinking": payload.get("thinking"),
+        "output_config": payload.get("output_config"),
+    }
+    return body
 
 
 class ModelClient:
@@ -94,7 +106,16 @@ class ModelClient:
 class OpenAIClient(ModelClient):
     """OpenAI-compatible Chat Completions adapter."""
 
-    def complete(self, prompt, *, temperature=0.2, max_tokens=DEFAULT_MAX_TOKENS):
+    def complete(
+        self,
+        prompt,
+        *,
+        temperature=0.2,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        reasoning_effort=None,
+        completion_token_limit=False,
+        allow_fallback=True,
+    ):
         url = f"{self.base_url.rstrip('/')}/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -102,18 +123,29 @@ class OpenAIClient(ModelClient):
         }
         payload = {
             "model": self.model,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_completion_tokens" if completion_token_limit else "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         }
-        body = _post_chat(url, headers, payload)
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if reasoning_effort is not None:
+            payload["reasoning_effort"] = reasoning_effort
+        body = _post_chat(url, headers, payload, allow_fallback=allow_fallback)
         try:
-            text = body["choices"][0]["message"]["content"]
+            text = body["choices"][0]["message"]["content"] or ""
             usage = body.get("usage", {})
             return {
                 "text": text,
                 "input_tokens": int(usage.get("prompt_tokens", 0)),
                 "output_tokens": int(usage.get("completion_tokens", 0)),
+                "metadata": {
+                    "response_model": body.get("model"),
+                    "response_id": body.get("id"),
+                    "refusal": body["choices"][0]["message"].get("refusal"),
+                    "finish_reason": body["choices"][0].get("finish_reason"),
+                    "usage": usage,
+                    "request": body.get("_evaluation_request", {}),
+                },
             }
         except (KeyError, IndexError, TypeError) as exc:
             raise ModelError(f"Unexpected OpenAI-style response: {body}") from exc
@@ -124,7 +156,16 @@ class AnthropicClient(ModelClient):
 
     ANTHROPIC_VERSION = "2023-06-01"
 
-    def complete(self, prompt, *, temperature=0.2, max_tokens=DEFAULT_MAX_TOKENS):
+    def complete(
+        self,
+        prompt,
+        *,
+        temperature=0.2,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        thinking=None,
+        output_config=None,
+        allow_fallback=True,
+    ):
         url = f"{self.base_url.rstrip('/')}/v1/messages"
         headers = {
             "Content-Type": "application/json",
@@ -134,10 +175,15 @@ class AnthropicClient(ModelClient):
         payload = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "messages": [{"role": "user", "content": prompt}],
         }
-        body = _post_chat(url, headers, payload)
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if thinking is not None:
+            payload["thinking"] = thinking
+        if output_config is not None:
+            payload["output_config"] = output_config
+        body = _post_chat(url, headers, payload, allow_fallback=allow_fallback)
         try:
             text = "".join(
                 block.get("text", "") for block in body["content"] if block.get("type") == "text"
@@ -147,6 +193,13 @@ class AnthropicClient(ModelClient):
                 "text": text,
                 "input_tokens": int(usage.get("input_tokens", 0)),
                 "output_tokens": int(usage.get("output_tokens", 0)),
+                "metadata": {
+                    "response_model": body.get("model"),
+                    "response_id": body.get("id"),
+                    "finish_reason": body.get("stop_reason"),
+                    "usage": usage,
+                    "request": body.get("_evaluation_request", {}),
+                },
             }
         except (KeyError, IndexError, TypeError) as exc:
             raise ModelError(f"Unexpected Anthropic response: {body}") from exc
