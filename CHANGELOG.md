@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Give every `run` its own `results/runs/<run_id>/` directory with a manifest
+  (requested settings, package and task-set versions, SHA-256 of every task file),
+  a snapshot of the evaluated tasks including `support/` trees, the prompt
+  template, generated samples with the original response text and response
+  metadata, and per-sample evaluation outcomes. Repeated runs no longer overwrite
+  earlier samples, and interrupted runs keep completed requests.
+- Add `--max-tokens` to `run`.
+- Add a `gemini` provider using Google's OpenAI-compatible endpoint, and pricing
+  for GPT-6 Luna, Claude Sonnet 5, Gemini 3.5 Flash-Lite and GPT-4.1 mini.
 - Isolate Docker test-result evidence in a size-capped container-local tmpfs,
   keep the sandbox running while exporting only `result.json` through a timed,
   16 KiB-bounded regular-file/non-symlink validator after execution. The trusted

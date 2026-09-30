@@ -77,6 +77,60 @@ def test_parser_accepts_doctor_flags():
     assert args.config_dir == "/tmp/cfg"
 
 
+def test_repeated_runs_preserve_samples_and_snapshot_inputs(tmp_path):
+    tasks_dir = tmp_path / "tasks"
+    task_dir = write_private_task(tasks_dir, "001_private", "add")
+    output = tmp_path / "results"
+    argv = [
+        "run",
+        "--model",
+        "stub",
+        "--provider",
+        "stub",
+        "--offline-stub",
+        "--tasks",
+        str(tasks_dir),
+        "--output",
+        str(output),
+        "-n",
+        "1",
+    ]
+    original = (task_dir / "solution_ref.rb").read_text()
+    assert main(argv) == 0
+    (task_dir / "solution_ref.rb").write_text("def add(a, b); 999; end\n")
+    assert main(argv) == 0
+    reports = [json.loads(p.read_text()) for p in sorted(output.glob("run_*.json"))]
+    assert len(reports) == 2
+    first, second = [output / r["artifacts_dir"] for r in reports]
+    assert first != second
+    assert (first / "samples/stub/001_private/sample_0.rb").read_text() == original
+    assert (first / "tasks/001_private/solution_ref.rb").read_text() == original
+    assert "999" in (second / "samples/stub/001_private/sample_0.rb").read_text()
+    manifest = json.loads((first / "manifest.json").read_text())
+    assert manifest["state"] == "completed"
+    assert "001_private/test.rb" in manifest["task_sha256"]
+    outcomes = json.loads((first / "samples/stub/001_private/evaluations.json").read_text())
+    assert outcomes[0]["status"] == "passed"
+    assert not list(output.rglob(".sandbox"))
+
+
+def test_run_snapshot_includes_task_support_tree(tmp_path):
+    tasks_dir = tmp_path / "tasks"
+    task_dir = write_private_task(tasks_dir, "001_private", "add")
+    (task_dir / "support").mkdir()
+    (task_dir / "support" / "fixture.json").write_text('{"rows": 3}\n', encoding="utf-8")
+    output = tmp_path / "results"
+    argv = ["run", "--model", "stub", "--provider", "stub", "--offline-stub"]
+    argv += ["--tasks", str(tasks_dir), "--output", str(output), "-n", "1"]
+    assert main(argv) == 0
+    report = json.loads(next(output.glob("run_*.json")).read_text())
+    run_dir = output / report["artifacts_dir"]
+    snapshot = run_dir / "tasks/001_private/support/fixture.json"
+    assert snapshot.read_text() == '{"rows": 3}\n'
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert "001_private/support/fixture.json" in manifest["task_sha256"]
+
+
 def test_style_defaults_off():
     args = build_parser().parse_args(["run", "--model", "m"])
     assert args.style is False
@@ -764,12 +818,12 @@ def test_stub_provider_smoke_selects_private_task_without_docker(tmp_path, monke
     assert "001_private_add" not in run_output.err
     assert "Offline stub provider" in run_output.err
 
-    generated_root = output_dir / "stub"
+    report_path = next(output_dir.glob("*.json"))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    generated_root = output_dir / report["artifacts_dir"] / "samples" / "stub"
     assert (generated_root / "002_private_subtract" / "sample_0.rb").is_file()
     assert not (generated_root / "001_private_add").exists()
 
-    report_path = next(output_dir.glob("*.json"))
-    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert [task["task_id"] for task in report["tasks"]] == ["002_private_subtract"]
     assert report["provider"] == "stub"
     assert report["model"] == "stub"

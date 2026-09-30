@@ -26,6 +26,12 @@ providers:
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
 
+  # Gemini's documented OpenAI-compatible endpoint.
+  gemini:
+    type: openai
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key_env: GEMINI_API_KEY
+
   # Any OpenAI-compatible gateway works by reusing the "openai" adapter type.
   openrouter:
     type: openai

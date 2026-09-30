@@ -2,7 +2,7 @@
 
 For every task we sample ``n`` completions at a fixed temperature, strip any
 markdown code fences, and write each candidate plus its token metadata under
-``results/<model>/<task>/``.
+the run's sample directory.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .model_client import ModelClient, ModelError, StubClient
+from .model_client import DEFAULT_MAX_TOKENS, ModelClient, ModelError, StubClient
 from .tasks import Task
 
 PROMPT_TEMPLATE = """You are an expert Ruby developer.
@@ -57,6 +57,8 @@ class Sample:
     input_tokens: int
     output_tokens: int
     error: str | None = None
+    raw_text: str | None = None
+    metadata: dict | None = None
 
 
 def safe_model_dir(model: str) -> str:
@@ -71,6 +73,7 @@ def generate_for_task(
     n: int,
     temperature: float,
     out_dir: Path,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> list[Sample]:
     """Generate ``n`` samples for one task and persist them to ``out_dir``."""
     task_dir = out_dir / task.id
@@ -87,20 +90,22 @@ def generate_for_task(
             sample = Sample(index=i, code=code, input_tokens=0, output_tokens=0)
         else:
             try:
-                result = client.complete(prompt, temperature=temperature)
+                result = client.complete(prompt, temperature=temperature, max_tokens=max_tokens)
                 sample = Sample(
                     index=i,
                     code=strip_code_fences(result["text"]),
                     input_tokens=result["input_tokens"],
                     output_tokens=result["output_tokens"],
+                    raw_text=result["text"],
+                    metadata=result.get("metadata"),
                 )
             except ModelError as exc:
                 sample = Sample(index=i, code="", input_tokens=0, output_tokens=0, error=str(exc))
 
         (task_dir / f"sample_{i}.rb").write_text(sample.code, encoding="utf-8")
         samples.append(sample)
-
-    (task_dir / "samples.json").write_text(
-        json.dumps([asdict(s) for s in samples], indent=2), encoding="utf-8"
-    )
+        # Retain completed requests even if a later request is interrupted.
+        (task_dir / "samples.json").write_text(
+            json.dumps([asdict(s) for s in samples], indent=2), encoding="utf-8"
+        )
     return samples
